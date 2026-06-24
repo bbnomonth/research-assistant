@@ -175,3 +175,18 @@ class PaperChunk(Base):
         DateTime(timezone=True),
         default=utc_now,
     )
+
+
+class Artifact(Base):
+    __tablename__ = "artifacts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(ForeignKey("projects.id"), index=True)
+    artifact_type: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(String(300))
+    content_json: Mapped[str] = mapped_column(Text, default="{}")
+    markdown: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )
