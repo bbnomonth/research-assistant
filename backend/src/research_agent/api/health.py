@@ -14,5 +14,5 @@ def health(request: Request):
         "status": "ok",
         "database": "ok",
         "model_configured": request.app.state.settings.model_configured,
+        "ocr_configured": request.app.state.ocr_service is not None,
     }
-

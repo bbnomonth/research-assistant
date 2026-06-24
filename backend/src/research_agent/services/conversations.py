@@ -8,11 +8,13 @@ from research_agent.repositories.conversations import ConversationRepository
 from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.chat import ChatMode, StreamEvent
 from research_agent.services.arxiv_search import ArxivSearchProvider
+from research_agent.services.guided_reading import GuidedReadingService
 from research_agent.services.literature import LiteratureDiscoveryService
 from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
 )
+from research_agent.services.research_diagnosis import ResearchDiagnosisService
 from research_agent.workflows.router import build_router_graph
 
 
@@ -39,6 +41,7 @@ class ConversationService:
         content: str,
         project_id: Optional[str] = None,
         session_id: Optional[str] = None,
+        paper_id: Optional[str] = None,
         mode_override: Optional[ChatMode] = None,
     ) -> AsyncIterator[StreamEvent]:
         project, conversation = self.repository.ensure_conversation(
@@ -85,6 +88,66 @@ class ConversationService:
                         "message": (
                             "arXiv 文献检索暂时不可用，请稍后重试；"
                             "普通问答和本地论文功能不受影响。"
+                        )
+                    },
+            )
+            return
+
+        if mode is ChatMode.RESEARCH_DIAGNOSIS:
+            try:
+                async for event in self._stream_research_diagnosis(
+                    project.id,
+                    conversation.id,
+                    content,
+                ):
+                    yield event
+            except Exception:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "研究诊断暂时不可用，请稍后重试；"
+                            "已保存的项目和文献不会受影响。"
+                        )
+                    },
+                )
+            return
+
+        if mode is ChatMode.PAPER_READING:
+            if paper_id is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "引导式精读需要显式提供 paper_id，系统不会自动猜测论文。"
+                        )
+                    },
+                )
+                return
+            try:
+                async for event in self._stream_guided_reading(
+                    project.id,
+                    conversation.id,
+                    paper_id,
+                    content,
+                    history,
+                ):
+                    yield event
+            except (LookupError, ValueError) as exc:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={"message": str(exc)},
+                )
+            except Exception:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "引导式精读暂时不可用，请稍后重试；"
+                            "已保存的论文和阅读记录不会受到影响。"
                         )
                     },
                 )
@@ -180,6 +243,7 @@ class ConversationService:
         service = LiteratureDiscoveryService(
             model_gateway=self.model_gateway,
             arxiv_provider=self.arxiv_provider,
+            db=self.db,
         )
         result = await service.discover(content)
         yield StreamEvent(
@@ -212,3 +276,102 @@ class ConversationService:
         )
         yield StreamEvent(event="token", data={"content": summary})
         yield StreamEvent(event="done", data={"content": summary})
+
+    async def _stream_research_diagnosis(
+        self,
+        project_id: str,
+        session_id: str,
+        content: str,
+    ) -> AsyncIterator[StreamEvent]:
+        yield StreamEvent(
+            event="stage",
+            data={"name": "evidence_collection", "label": "收集项目文献证据"},
+        )
+        yield StreamEvent(
+            event="stage",
+            data={"name": "diagnosis", "label": "生成研究诊断"},
+        )
+        result = await ResearchDiagnosisService(
+            db=self.db,
+            model_gateway=self.model_gateway,
+        ).diagnose(project_id, content)
+        yield StreamEvent(
+            event="stage",
+            data={"name": "persistence", "label": "保存诊断成果"},
+        )
+        summary = (
+            "已根据当前项目材料生成研究诊断，并保存为可编辑成果。"
+        )
+        self.repository.add_message(
+            session_id,
+            "assistant",
+            summary,
+            mode=ChatMode.RESEARCH_DIAGNOSIS.value,
+        )
+        self.db.commit()
+        yield StreamEvent(
+            event="artifact",
+            data={
+                "artifact_id": result.artifact.id,
+                "artifact_type": result.artifact.artifact_type,
+                "title": result.artifact.title,
+                "evidence_pages": result.evidence_pages,
+            },
+        )
+        yield StreamEvent(event="token", data={"content": summary})
+        yield StreamEvent(event="done", data={"content": summary})
+
+    async def _stream_guided_reading(
+        self,
+        project_id: str,
+        session_id: str,
+        paper_id: str,
+        content: str,
+        history,
+    ) -> AsyncIterator[StreamEvent]:
+        yield StreamEvent(
+            event="stage",
+            data={"name": "evidence_collection", "label": "收集论文证据"},
+        )
+        yield StreamEvent(
+            event="stage",
+            data={"name": "reading_guidance", "label": "生成阅读反馈"},
+        )
+        result = await GuidedReadingService(
+            db=self.db,
+            model_gateway=self.model_gateway,
+        ).guide(
+            project_id=project_id,
+            paper_id=paper_id,
+            user_input=content,
+            history=[
+                {"role": item.role, "content": item.content}
+                for item in history
+            ],
+        )
+        response = result.turn.feedback
+        if result.turn.next_question:
+            response = f"{response}\n\n{result.turn.next_question}".strip()
+        self.repository.add_message(
+            session_id,
+            "assistant",
+            response,
+            mode=ChatMode.PAPER_READING.value,
+        )
+        self.db.commit()
+        yield StreamEvent(
+            event="evidence",
+            data={"paper_id": paper_id, "pages": result.evidence_pages},
+        )
+        if result.artifact is not None:
+            yield StreamEvent(
+                event="artifact",
+                data={
+                    "artifact_id": result.artifact.id,
+                    "artifact_type": result.artifact.artifact_type,
+                    "title": result.artifact.title,
+                    "evidence_pages": result.evidence_pages,
+                },
+            )
+        yield StreamEvent(event="token", data={"content": response})
+        yield StreamEvent(event="done", data={"content": response})

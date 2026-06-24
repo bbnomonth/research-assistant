@@ -48,3 +48,13 @@ class PaperRepository:
             self.db.flush()
             stored.append(paper)
         return stored
+
+    def list_for_project(self, project_id: str, limit: int = 20) -> List[Paper]:
+        return list(
+            self.db.scalars(
+                select(Paper)
+                .where(Paper.project_id == project_id)
+                .order_by(Paper.created_at.desc())
+                .limit(limit)
+            )
+        )

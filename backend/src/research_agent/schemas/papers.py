@@ -25,3 +25,19 @@ class EvidenceItem(BaseModel):
 
 class EvidenceSearchResponse(BaseModel):
     results: List[EvidenceItem]
+
+
+class QuickAnalysisResponse(BaseModel):
+    artifact_id: str
+    title: str
+    evidence_pages: List[int]
+
+
+class PaperComparisonRequest(BaseModel):
+    paper_ids: List[str]
+
+
+class PaperComparisonResponse(BaseModel):
+    artifact_id: str
+    title: str
+    evidence_pages: dict[str, List[int]]

@@ -91,3 +91,27 @@ class PaperChunkRepository:
             )
             for chunk in chunks
         ]
+
+    def list_for_paper(
+        self,
+        paper_id: str,
+        limit: int = 8,
+    ) -> List[EvidenceResult]:
+        chunks = list(
+            self.db.scalars(
+                select(PaperChunk)
+                .where(PaperChunk.paper_id == paper_id)
+                .order_by(PaperChunk.page_number, PaperChunk.chunk_index)
+                .limit(limit)
+            )
+        )
+        return [
+            EvidenceResult(
+                chunk_id=chunk.id,
+                page_number=chunk.page_number,
+                section=chunk.section,
+                text=chunk.text,
+                is_ocr=bool(chunk.is_ocr),
+            )
+            for chunk in chunks
+        ]

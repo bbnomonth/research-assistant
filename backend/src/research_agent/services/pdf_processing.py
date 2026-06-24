@@ -1,7 +1,7 @@
 from pathlib import Path
 import subprocess
 from tempfile import TemporaryDirectory
-from typing import Dict, List
+from typing import Dict, List, Optional, Protocol
 
 import fitz
 
@@ -10,12 +10,19 @@ class PdfTooLargeError(ValueError):
     pass
 
 
+class OcrService(Protocol):
+    def ocr_image(self, image_path: Path) -> str:
+        pass
+
+
 class PdfProcessor:
     def __init__(
         self,
         max_bytes: int = 10 * 1024 * 1024,
+        ocr_service: Optional[OcrService] = None,
     ) -> None:
         self.max_bytes = max_bytes
+        self.ocr_service = ocr_service
 
     def extract_text_chunks(
         self,
@@ -26,6 +33,7 @@ class PdfProcessor:
             raise PdfTooLargeError("PDF exceeds 10 MB limit")
 
         chunks = []
+        pages_with_text = set()
         with fitz.open(path) as document:
             page_count = min(document.page_count, max_pages)
             chunk_index = 1
@@ -34,6 +42,7 @@ class PdfProcessor:
                 text = page.get_text("text").strip()
                 if not text:
                     continue
+                pages_with_text.add(page_index)
                 chunks.append(
                     {
                         "page_number": page_index + 1,
@@ -44,7 +53,49 @@ class PdfProcessor:
                     }
                 )
                 chunk_index += 1
+            if self.ocr_service is not None and self.needs_ocr(chunks):
+                chunk_index = self._append_ocr_chunks(
+                    document=document,
+                    chunks=chunks,
+                    pages_with_text=pages_with_text,
+                    page_count=page_count,
+                    next_chunk_index=chunk_index,
+                    pdf_path=path,
+                )
         return chunks
+
+    def _append_ocr_chunks(
+        self,
+        document: fitz.Document,
+        chunks: List[Dict],
+        pages_with_text: set[int],
+        page_count: int,
+        next_chunk_index: int,
+        pdf_path: Path,
+    ) -> int:
+        assert self.ocr_service is not None
+        with TemporaryDirectory(dir=pdf_path.parent) as temp_dir:
+            temp_path = Path(temp_dir)
+            for page_index in range(page_count):
+                if page_index in pages_with_text:
+                    continue
+                page = document.load_page(page_index)
+                image_path = temp_path / f"page-{page_index + 1}.png"
+                page.get_pixmap(matrix=fitz.Matrix(2, 2)).save(image_path)
+                text = self.ocr_service.ocr_image(image_path).strip()
+                if not text:
+                    continue
+                chunks.append(
+                    {
+                        "page_number": page_index + 1,
+                        "chunk_index": next_chunk_index,
+                        "section": "",
+                        "text": text,
+                        "is_ocr": True,
+                    }
+                )
+                next_chunk_index += 1
+        return next_chunk_index
 
     @staticmethod
     def needs_ocr(chunks: List[Dict]) -> bool:

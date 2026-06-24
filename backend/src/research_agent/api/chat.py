@@ -32,6 +32,7 @@ def stream_chat(payload: ChatRequest, request: Request):
                 content=payload.content,
                 project_id=payload.project_id,
                 session_id=payload.session_id,
+                paper_id=payload.paper_id,
                 mode_override=payload.mode_override,
             ):
                 yield event.to_sse()

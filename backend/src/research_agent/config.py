@@ -21,6 +21,8 @@ class Settings:
     qwen_api_key: Optional[str] = None
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen3.7-plus"
+    tesseract_executable: Optional[str] = None
+    ocr_language: str = "chi_sim+eng"
     pdf_max_bytes: int = 10 * 1024 * 1024
     pdf_max_pages: int = 60
 
@@ -55,4 +57,6 @@ class Settings:
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
             qwen_model=os.getenv("QWEN_MODEL", "qwen3.7-plus"),
+            tesseract_executable=os.getenv("TESSERACT_EXECUTABLE"),
+            ocr_language=os.getenv("OCR_LANGUAGE", "chi_sim+eng"),
         )

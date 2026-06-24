@@ -1,8 +1,9 @@
 import json
-import re
-from typing import List
+import time
+from typing import List, Optional
 
-from pydantic import TypeAdapter, ValidationError
+from pydantic import TypeAdapter
+from sqlalchemy.orm import Session
 
 from research_agent.schemas.literature import (
     LiteratureDiscoveryResult,
@@ -11,21 +12,9 @@ from research_agent.schemas.literature import (
     RecommendedPaper,
 )
 from research_agent.services.arxiv_search import ArxivSearchProvider
-from research_agent.services.model_gateway import ModelGateway, collect_chat
-
-
-JSON_FENCE = re.compile(
-    r"```(?:json)?\s*(.*?)\s*```",
-    re.DOTALL | re.IGNORECASE,
-)
-
-
-def extract_json(text: str):
-    stripped = text.strip()
-    match = JSON_FENCE.search(stripped)
-    if match:
-        stripped = match.group(1).strip()
-    return json.loads(stripped)
+from research_agent.services.model_call_logging import record_model_call
+from research_agent.services.model_gateway import ModelGateway
+from research_agent.services.structured_output import validate_structured
 
 
 class LiteratureDiscoveryService:
@@ -33,9 +22,11 @@ class LiteratureDiscoveryService:
         self,
         model_gateway: ModelGateway,
         arxiv_provider: ArxivSearchProvider,
+        db: Optional[Session] = None,
     ) -> None:
         self.model_gateway = model_gateway
         self.arxiv_provider = arxiv_provider
+        self.db = db
 
     async def discover(self, topic: str) -> LiteratureDiscoveryResult:
         query = await self._generate_query(topic)
@@ -54,16 +45,34 @@ class LiteratureDiscoveryService:
             '{"english_query":"..."}。'
             f"\n用户主题：{topic}"
         )
-        response = await collect_chat(
-            self.model_gateway,
-            [{"role": "user", "content": prompt}],
-        )
+        started = time.perf_counter()
         try:
-            return LiteratureQuery.model_validate(
-                extract_json(response)
-            ).english_query.strip()
-        except (ValueError, ValidationError):
-            return topic
+            result = await validate_structured(
+                gateway=self.model_gateway,
+                prompt=prompt,
+                validator=LiteratureQuery.model_validate,
+                fallback=LiteratureQuery(english_query=topic),
+            )
+            record_model_call(
+                self.db,
+                "literature_query",
+                self.model_gateway.model_name,
+                started,
+                result.retries,
+                True,
+            )
+            return result.value.english_query.strip()
+        except Exception as exc:
+            record_model_call(
+                self.db,
+                "literature_query",
+                self.model_gateway.model_name,
+                started,
+                0,
+                False,
+                exc,
+            )
+            raise
 
     async def _recommend(
         self,
@@ -89,16 +98,35 @@ class LiteratureDiscoveryService:
             f"\n用户主题：{topic}"
             f"\n候选文献：{json.dumps(candidate_payload, ensure_ascii=False)}"
         )
-        response = await collect_chat(
-            self.model_gateway,
-            [{"role": "user", "content": prompt}],
-        )
+        adapter = TypeAdapter(List[RecommendationItem])
+        started = time.perf_counter()
         try:
-            items = TypeAdapter(
-                List[RecommendationItem]
-            ).validate_python(extract_json(response))
-        except (ValueError, ValidationError):
-            items = []
+            result = await validate_structured(
+                gateway=self.model_gateway,
+                prompt=prompt,
+                validator=adapter.validate_python,
+                fallback=[],
+            )
+            record_model_call(
+                self.db,
+                "literature_recommendation",
+                self.model_gateway.model_name,
+                started,
+                result.retries,
+                True,
+            )
+            items = result.value
+        except Exception as exc:
+            record_model_call(
+                self.db,
+                "literature_recommendation",
+                self.model_gateway.model_name,
+                started,
+                0,
+                False,
+                exc,
+            )
+            raise
 
         candidate_by_id = {
             paper.arxiv_id: paper

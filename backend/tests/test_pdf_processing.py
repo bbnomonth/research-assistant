@@ -36,6 +36,31 @@ def test_pdf_processor_limits_to_first_60_pages(tmp_path) -> None:
     assert chunks[-1]["page_number"] == 60
 
 
+def test_pdf_processor_uses_ocr_when_text_is_missing(tmp_path) -> None:
+    pdf_path = tmp_path / "scanned.pdf"
+    document = fitz.open()
+    document.new_page()
+    document.save(pdf_path)
+    document.close()
+
+    class FakeOcr:
+        def __init__(self) -> None:
+            self.paths = []
+
+        def ocr_image(self, image_path: Path) -> str:
+            self.paths.append(image_path)
+            return "OCR vehicle routing evidence"
+
+    ocr = FakeOcr()
+    chunks = PdfProcessor(ocr_service=ocr).extract_text_chunks(pdf_path)
+
+    assert len(chunks) == 1
+    assert chunks[0]["page_number"] == 1
+    assert chunks[0]["is_ocr"] is True
+    assert chunks[0]["text"] == "OCR vehicle routing evidence"
+    assert ocr.paths[0].suffix == ".png"
+
+
 def test_tesseract_ocr_service_uses_configured_language(tmp_path) -> None:
     calls = []
 

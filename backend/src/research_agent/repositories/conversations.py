@@ -1,4 +1,5 @@
-from typing import List, Optional, Tuple
+import json
+from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -72,3 +73,53 @@ class ConversationRepository:
         messages = list(self.db.scalars(statement))
         messages.reverse()
         return messages
+
+    def list_projects(self) -> List[Project]:
+        return list(
+            self.db.scalars(
+                select(Project).order_by(Project.updated_at.desc())
+            )
+        )
+
+    def get_project(self, project_id: str) -> Optional[Project]:
+        return self.db.get(Project, project_id)
+
+    def update_project(
+        self,
+        project_id: str,
+        name: Optional[str] = None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> Project:
+        project = self.get_project(project_id)
+        if project is None:
+            raise LookupError("project not found")
+        if name is not None:
+            project.name = name.strip()
+        if profile is not None:
+            project.profile_json = json.dumps(profile, ensure_ascii=False)
+        self.db.flush()
+        return project
+
+    def get_session(
+        self,
+        session_id: str,
+    ) -> Optional[ConversationSession]:
+        return self.db.get(ConversationSession, session_id)
+
+    def list_sessions(self, project_id: str) -> List[ConversationSession]:
+        return list(
+            self.db.scalars(
+                select(ConversationSession)
+                .where(ConversationSession.project_id == project_id)
+                .order_by(ConversationSession.created_at.desc())
+            )
+        )
+
+    def list_messages(self, session_id: str) -> List[Message]:
+        return list(
+            self.db.scalars(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.sequence)
+            )
+        )

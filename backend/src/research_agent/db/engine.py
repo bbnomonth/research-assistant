@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from sqlalchemy import create_engine
+from sqlalchemy import event
 from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -16,10 +17,17 @@ class Database:
             f"sqlite:///{path.as_posix()}",
             connect_args={"check_same_thread": False},
         )
+        event.listen(self.engine, "connect", self._configure_sqlite)
         self.session_factory = sessionmaker(
             self.engine,
             expire_on_commit=False,
         )
+
+    @staticmethod
+    def _configure_sqlite(dbapi_connection, _) -> None:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=MEMORY")
+        cursor.close()
 
     def create_schema(self) -> None:
         Base.metadata.create_all(self.engine)

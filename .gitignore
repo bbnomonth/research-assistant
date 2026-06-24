@@ -40,6 +40,8 @@ __pycache__/
 .pytest_cache/
 pytest-cache-files-*/
 backend/.pytest-tmp/
+backend/.pytest-tmp*/
+backend/tmp_probe/
 .mypy_cache/
 .ruff_cache/
 .coverage

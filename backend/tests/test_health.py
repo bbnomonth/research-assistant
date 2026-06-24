@@ -6,5 +6,5 @@ def test_health_reports_database_and_model_configuration(client) -> None:
         "status": "ok",
         "database": "ok",
         "model_configured": False,
+        "ocr_configured": True,
     }
-

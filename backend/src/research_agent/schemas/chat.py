@@ -16,6 +16,7 @@ class ChatRequest(BaseModel):
     content: str = Field(min_length=1, max_length=20_000)
     project_id: Optional[str] = None
     session_id: Optional[str] = None
+    paper_id: Optional[str] = None
     mode_override: Optional[ChatMode] = None
 
 
@@ -26,4 +27,3 @@ class StreamEvent(BaseModel):
     def to_sse(self) -> str:
         payload = json.dumps(self.data, ensure_ascii=False)
         return f"event: {self.event}\ndata: {payload}\n\n"
-
