@@ -72,3 +72,40 @@ def test_service_does_not_call_model_for_unimplemented_mode(tmp_path) -> None:
         "done",
     ]
     assert "后续阶段" in events[-1].data["content"]
+
+
+def test_literature_failure_emits_safe_error_event(tmp_path) -> None:
+    class FailingProvider:
+        async def search(self, query):
+            del query
+            raise RuntimeError("network details must not leak")
+
+    class QueryGateway:
+        model_name = "fake"
+
+        async def stream_chat(self, messages):
+            del messages
+            yield '{"english_query":"vehicle routing"}'
+
+    database = Database(tmp_path / "test.sqlite3")
+    database.create_schema()
+
+    async def collect():
+        with database.session_factory() as db:
+            service = ConversationService(
+                db=db,
+                model_gateway=QueryGateway(),
+                arxiv_provider=FailingProvider(),
+            )
+            return [
+                event
+                async for event in service.stream_reply(
+                    content="搜索车辆路径论文",
+                )
+            ]
+
+    events = asyncio.run(collect())
+
+    assert events[-1].event == "error"
+    assert "arXiv" in events[-1].data["message"]
+    assert "network details" not in events[-1].data["message"]

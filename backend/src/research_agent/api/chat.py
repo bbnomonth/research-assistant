@@ -23,7 +23,11 @@ def stream_chat(payload: ChatRequest, request: Request):
     async def event_generator():
         database = request.app.state.database
         with database.session_factory() as db:
-            service = ConversationService(db=db, model_gateway=model_gateway)
+            service = ConversationService(
+                db=db,
+                model_gateway=model_gateway,
+                arxiv_provider=request.app.state.arxiv_provider,
+            )
             async for event in service.stream_reply(
                 content=payload.content,
                 project_id=payload.project_id,
@@ -40,4 +44,3 @@ def stream_chat(payload: ChatRequest, request: Request):
             "X-Accel-Buffering": "no",
         },
     )
-

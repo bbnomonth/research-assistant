@@ -11,11 +11,16 @@ from research_agent.services.model_gateway import (
     ModelGateway,
     QwenOpenAIGateway,
 )
+from research_agent.services.arxiv_search import (
+    ArxivSearchProvider,
+    LangChainArxivSearchProvider,
+)
 
 
 def create_app(
     settings: Optional[Settings] = None,
     model_gateway: Optional[ModelGateway] = None,
+    arxiv_provider: Optional[ArxivSearchProvider] = None,
 ) -> FastAPI:
     active_settings = settings or Settings.from_env()
     database = Database(active_settings.resolved_database_path)
@@ -27,6 +32,8 @@ def create_app(
             base_url=active_settings.qwen_base_url,
             model_name=active_settings.qwen_model,
         )
+    if arxiv_provider is None:
+        arxiv_provider = LangChainArxivSearchProvider(max_results=20)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -48,6 +55,7 @@ def create_app(
     app.state.settings = active_settings
     app.state.database = database
     app.state.model_gateway = model_gateway
+    app.state.arxiv_provider = arxiv_provider
     app.include_router(health_router)
     app.include_router(chat_router)
     return app

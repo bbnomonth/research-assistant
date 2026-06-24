@@ -5,7 +5,10 @@ from sqlalchemy.orm import Session
 
 from research_agent.db.models import ModelCallLog
 from research_agent.repositories.conversations import ConversationRepository
+from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.chat import ChatMode, StreamEvent
+from research_agent.services.arxiv_search import ArxivSearchProvider
+from research_agent.services.literature import LiteratureDiscoveryService
 from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
@@ -23,9 +26,11 @@ class ConversationService:
         self,
         db: Session,
         model_gateway: ModelGateway,
+        arxiv_provider: Optional[ArxivSearchProvider] = None,
     ) -> None:
         self.db = db
         self.model_gateway = model_gateway
+        self.arxiv_provider = arxiv_provider
         self.repository = ConversationRepository(db)
         self.router_graph = build_router_graph()
 
@@ -60,6 +65,30 @@ class ConversationService:
                 "session_id": conversation.id,
             },
         )
+
+        if (
+            mode is ChatMode.LITERATURE_DISCOVERY
+            and self.arxiv_provider is not None
+        ):
+            try:
+                async for event in self._stream_literature_discovery(
+                    project.id,
+                    conversation.id,
+                    content,
+                ):
+                    yield event
+            except Exception:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "arXiv 文献检索暂时不可用，请稍后重试；"
+                            "普通问答和本地论文功能不受影响。"
+                        )
+                    },
+                )
+            return
 
         if mode is not ChatMode.GENERAL_QA:
             self.repository.add_message(
@@ -133,3 +162,53 @@ class ConversationService:
                     "message": "模型服务暂时不可用，请检查本地配置或稍后重试。"
                 },
             )
+
+    async def _stream_literature_discovery(
+        self,
+        project_id: str,
+        session_id: str,
+        content: str,
+    ) -> AsyncIterator[StreamEvent]:
+        yield StreamEvent(
+            event="stage",
+            data={"name": "query_generation", "label": "生成英文检索式"},
+        )
+        yield StreamEvent(
+            event="stage",
+            data={"name": "arxiv_search", "label": "检索 arXiv"},
+        )
+        service = LiteratureDiscoveryService(
+            model_gateway=self.model_gateway,
+            arxiv_provider=self.arxiv_provider,
+        )
+        result = await service.discover(content)
+        yield StreamEvent(
+            event="stage",
+            data={"name": "recommendation", "label": "筛选推荐文献"},
+        )
+        yield StreamEvent(
+            event="stage",
+            data={"name": "persistence", "label": "保存到研究项目"},
+        )
+        PaperRepository(self.db).upsert_arxiv_papers(
+            project_id,
+            result.recommendations,
+        )
+        summary = (
+            f"已使用检索式 `{result.query}` 检索 arXiv，"
+            f"从 {len(result.candidates)} 篇候选中推荐"
+            f" {len(result.recommendations)} 篇文献。"
+        )
+        self.repository.add_message(
+            session_id,
+            "assistant",
+            summary,
+            mode=ChatMode.LITERATURE_DISCOVERY.value,
+        )
+        self.db.commit()
+        yield StreamEvent(
+            event="search_results",
+            data=result.model_dump(),
+        )
+        yield StreamEvent(event="token", data={"content": summary})
+        yield StreamEvent(event="done", data={"content": summary})
