@@ -99,3 +99,14 @@ class QwenOpenAIGateway:
 
     async def aclose(self) -> None:
         await self._client.close()
+
+
+async def collect_chat(
+    gateway: ModelGateway,
+    messages: List[Dict[str, str]],
+) -> str:
+    parts = [
+        token
+        async for token in gateway.stream_chat(messages)
+    ]
+    return "".join(parts)
