@@ -1,4 +1,6 @@
 from pathlib import Path
+import subprocess
+from tempfile import TemporaryDirectory
 from typing import Dict, List
 
 import fitz
@@ -48,3 +50,39 @@ class PdfProcessor:
     def needs_ocr(chunks: List[Dict]) -> bool:
         total_chars = sum(len(chunk["text"].strip()) for chunk in chunks)
         return total_chars < 200
+
+
+class TesseractOcrService:
+    def __init__(
+        self,
+        executable: str,
+        language: str = "chi_sim+eng",
+        runner=None,
+    ) -> None:
+        self.executable = executable
+        self.language = language
+        self.runner = runner or self._run
+
+    def ocr_image(self, image_path: Path) -> str:
+        with TemporaryDirectory(dir=image_path.parent) as temp_dir:
+            output_base = Path(temp_dir) / "page"
+            command = [
+                self.executable,
+                str(image_path),
+                str(output_base),
+                "-l",
+                self.language,
+            ]
+            self.runner(command)
+            output_file = output_base.with_suffix(".txt")
+            return output_file.read_text(encoding="utf-8").strip()
+
+    @staticmethod
+    def _run(command: List[str]) -> None:
+        subprocess.run(
+            command,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )

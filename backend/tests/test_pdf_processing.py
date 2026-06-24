@@ -1,6 +1,8 @@
+from pathlib import Path
+
 import fitz
 
-from research_agent.services.pdf_processing import PdfProcessor
+from research_agent.services.pdf_processing import PdfProcessor, TesseractOcrService
 
 
 def _make_pdf(path, pages: int) -> None:
@@ -32,3 +34,27 @@ def test_pdf_processor_limits_to_first_60_pages(tmp_path) -> None:
 
     assert len(chunks) == 60
     assert chunks[-1]["page_number"] == 60
+
+
+def test_tesseract_ocr_service_uses_configured_language(tmp_path) -> None:
+    calls = []
+
+    def fake_runner(command):
+        calls.append(command)
+        output = Path(command[2]).with_suffix(".txt")
+        output.write_text("OCR vehicle routing", encoding="utf-8")
+
+    image_path = tmp_path / "page.png"
+    image_path.write_bytes(b"fake")
+    service = TesseractOcrService(
+        executable="tesseract",
+        language="chi_sim+eng",
+        runner=fake_runner,
+    )
+
+    text = service.ocr_image(image_path)
+
+    assert text == "OCR vehicle routing"
+    assert calls[0][0] == "tesseract"
+    assert "-l" in calls[0]
+    assert "chi_sim+eng" in calls[0]
