@@ -12,6 +12,8 @@ credentials/
 # User papers, extracted text, OCR output, and local application data
 *.docx
 data/
+backend/data/
+backend/.env
 uploads/
 papers/
 artifacts/
