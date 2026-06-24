@@ -1,6 +1,6 @@
 from typing import List, Optional, Tuple
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from research_agent.db.models import ConversationSession, Message, Project
@@ -42,11 +42,17 @@ class ConversationRepository:
         content: str,
         mode: Optional[str] = None,
     ) -> Message:
+        current_max = self.db.scalar(
+            select(func.max(Message.sequence)).where(
+                Message.session_id == session_id
+            )
+        )
         message = Message(
             session_id=session_id,
             role=role,
             content=content,
             mode=mode,
+            sequence=(current_max or 0) + 1,
         )
         self.db.add(message)
         self.db.flush()
@@ -60,7 +66,7 @@ class ConversationRepository:
         statement = (
             select(Message)
             .where(Message.session_id == session_id)
-            .order_by(Message.created_at.desc())
+            .order_by(Message.sequence.desc())
             .limit(limit)
         )
         messages = list(self.db.scalars(statement))
