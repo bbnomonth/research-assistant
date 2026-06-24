@@ -128,3 +128,50 @@ class Paper(Base):
         default=utc_now,
         onupdate=utc_now,
     )
+
+
+class Task(Base):
+    __tablename__ = "tasks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    task_type: Mapped[str] = mapped_column(String(80))
+    paper_id: Mapped[Optional[str]] = mapped_column(
+        ForeignKey("papers.id"),
+        nullable=True,
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(40), default="pending")
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
+    )
+
+
+class PaperChunk(Base):
+    __tablename__ = "paper_chunks"
+    __table_args__ = (
+        UniqueConstraint(
+            "paper_id",
+            "chunk_index",
+            name="uq_chunks_paper_index",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    paper_id: Mapped[str] = mapped_column(ForeignKey("papers.id"), index=True)
+    page_number: Mapped[int] = mapped_column(Integer)
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    section: Mapped[str] = mapped_column(String(200), default="")
+    text: Mapped[str] = mapped_column(Text)
+    is_ocr: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )

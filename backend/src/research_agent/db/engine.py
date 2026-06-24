@@ -2,6 +2,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 from sqlalchemy import create_engine
+from sqlalchemy import text
 from sqlalchemy.orm import Session, sessionmaker
 
 from . import models  # noqa: F401
@@ -22,6 +23,13 @@ class Database:
 
     def create_schema(self) -> None:
         Base.metadata.create_all(self.engine)
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    "CREATE VIRTUAL TABLE IF NOT EXISTS paper_chunks_fts "
+                    "USING fts5(chunk_id UNINDEXED, paper_id UNINDEXED, text)"
+                )
+            )
 
     def session(self) -> Iterator[Session]:
         with self.session_factory() as session:
