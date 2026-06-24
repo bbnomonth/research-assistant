@@ -5,6 +5,7 @@ from fastapi import FastAPI
 
 from research_agent.api.chat import router as chat_router
 from research_agent.api.health import router as health_router
+from research_agent.api.papers import router as papers_router
 from research_agent.config import Settings
 from research_agent.db.engine import Database
 from research_agent.services.model_gateway import (
@@ -58,6 +59,7 @@ def create_app(
     app.state.arxiv_provider = arxiv_provider
     app.include_router(health_router)
     app.include_router(chat_router)
+    app.include_router(papers_router)
     return app
 
 
