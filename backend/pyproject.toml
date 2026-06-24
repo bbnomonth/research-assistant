@@ -9,7 +9,9 @@ requires-python = ">=3.9,<3.10"
 dependencies = [
   "fastapi==0.128.8",
   "httpx==0.28.1",
+  "langchain-community>=0.3.27,<0.4",
   "langgraph>=0.2,<0.3",
+  "arxiv>=2.1,<3",
   "openai==1.109.1",
   "pydantic==2.12.2",
   "python-dotenv>=1.0,<2.0",

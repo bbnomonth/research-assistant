@@ -2,7 +2,14 @@ from datetime import datetime, timezone
 from typing import Optional
 from uuid import uuid4
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base
@@ -84,4 +91,40 @@ class ModelCallLog(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
+    )
+
+
+class Paper(Base):
+    __tablename__ = "papers"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "arxiv_id",
+            name="uq_papers_project_arxiv",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    project_id: Mapped[str] = mapped_column(
+        ForeignKey("projects.id"),
+        index=True,
+    )
+    arxiv_id: Mapped[str] = mapped_column(String(80))
+    title: Mapped[str] = mapped_column(Text)
+    authors_json: Mapped[str] = mapped_column(Text, default="[]")
+    abstract: Mapped[str] = mapped_column(Text)
+    published: Mapped[str] = mapped_column(String(40))
+    categories_json: Mapped[str] = mapped_column(Text, default="[]")
+    entry_url: Mapped[str] = mapped_column(Text)
+    pdf_url: Mapped[str] = mapped_column(Text)
+    recommendation_reason: Mapped[str] = mapped_column(Text, default="")
+    purpose_labels_json: Mapped[str] = mapped_column(Text, default="[]")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
     )
