@@ -52,6 +52,9 @@ class FakeModelGateway:
         for token in self._tokens:
             yield token
 
+    async def aclose(self) -> None:
+        return None
+
 
 class QwenOpenAIGateway:
     def __init__(
@@ -79,7 +82,10 @@ class QwenOpenAIGateway:
                     stream=True,
                 )
                 async for chunk in stream:
-                    token = chunk.choices[0].delta.content
+                    if not chunk.choices:
+                        continue
+                    delta = chunk.choices[0].delta
+                    token = getattr(delta, "content", None)
                     if token:
                         emitted = True
                         yield token
@@ -90,3 +96,6 @@ class QwenOpenAIGateway:
                 raise ModelGatewayError(
                     "模型服务暂时不可用，请检查百炼配置或稍后重试。"
                 ) from exc
+
+    async def aclose(self) -> None:
+        await self._client.close()

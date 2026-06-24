@@ -1,7 +1,9 @@
 import asyncio
+from types import SimpleNamespace
 
 from research_agent.services.model_gateway import (
     FakeModelGateway,
+    QwenOpenAIGateway,
     build_qwen_messages,
 )
 
@@ -26,3 +28,61 @@ def test_fake_gateway_streams_tokens() -> None:
         return [token async for token in gateway.stream_chat([])]
 
     assert asyncio.run(collect()) == ["第一段", "第二段"]
+
+
+def test_qwen_gateway_ignores_stream_chunks_without_choices() -> None:
+    class FakeCompletions:
+        async def create(self, **kwargs):
+            del kwargs
+
+            async def chunks():
+                yield SimpleNamespace(choices=[])
+                yield SimpleNamespace(
+                    choices=[
+                        SimpleNamespace(
+                            delta=SimpleNamespace(content="OK")
+                        )
+                    ]
+                )
+
+            return chunks()
+
+    async def collect():
+        gateway = QwenOpenAIGateway(
+            api_key="not-a-real-key",
+            base_url="https://example.invalid",
+            model_name="test-model",
+        )
+        gateway._client = SimpleNamespace(
+            chat=SimpleNamespace(completions=FakeCompletions())
+        )
+        return [
+            token
+            async for token in gateway.stream_chat(
+                [{"role": "user", "content": "test"}]
+            )
+        ]
+
+    assert asyncio.run(collect()) == ["OK"]
+
+
+def test_qwen_gateway_closes_underlying_client() -> None:
+    class FakeClient:
+        def __init__(self) -> None:
+            self.closed = False
+
+        async def close(self) -> None:
+            self.closed = True
+
+    async def close_gateway() -> bool:
+        gateway = QwenOpenAIGateway(
+            api_key="not-a-real-key",
+            base_url="https://example.invalid",
+            model_name="test-model",
+        )
+        fake_client = FakeClient()
+        gateway._client = fake_client
+        await gateway.aclose()
+        return fake_client.closed
+
+    assert asyncio.run(close_gateway()) is True

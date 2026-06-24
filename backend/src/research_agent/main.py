@@ -31,8 +31,14 @@ def create_app(
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         database.create_schema()
-        yield
-        database.engine.dispose()
+        try:
+            yield
+        finally:
+            if model_gateway is not None:
+                close = getattr(model_gateway, "aclose", None)
+                if close is not None:
+                    await close()
+            database.engine.dispose()
 
     app = FastAPI(
         title="Research Training Agent API",
