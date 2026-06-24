@@ -36,6 +36,8 @@ temp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+pytest-cache-files-*/
+backend/.pytest-tmp/
 .mypy_cache/
 .ruff_cache/
 .coverage
@@ -43,6 +45,8 @@ htmlcov/
 .venv/
 venv/
 env/
+backend/*.egg-info/
+backend/src/*.egg-info/
 
 # Node.js and frontend builds
 node_modules/
