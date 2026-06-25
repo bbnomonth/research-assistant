@@ -62,4 +62,4 @@ def test_paper_reading_requires_explicit_paper_id(client) -> None:
     assert response.status_code == 200
     assert '"mode": "paper_reading"' in body
     assert "event: error" in body
-    assert "paper_id" in body
+    assert "PAPER_READING_REQUIRES_PAPER" in body

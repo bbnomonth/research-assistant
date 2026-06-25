@@ -7,6 +7,7 @@ class TaskResponse(BaseModel):
     id: str
     status: str
     progress: int
+    paper_id: Optional[str] = None
     error_message: Optional[str] = None
 
 
@@ -41,3 +42,9 @@ class PaperComparisonResponse(BaseModel):
     artifact_id: str
     title: str
     evidence_pages: dict[str, List[int]]
+
+
+class FavoritePaperRequest(BaseModel):
+    project_id: str
+    arxiv_id: str
+    favorited: bool

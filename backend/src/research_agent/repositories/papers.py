@@ -1,5 +1,5 @@
 import json
-from typing import List
+from typing import List, Optional
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -58,3 +58,27 @@ class PaperRepository:
                 .limit(limit)
             )
         )
+
+    def list_for_evidence(self, project_id: str) -> List[Paper]:
+        """Return papers eligible for evidence-based features: favorited or uploaded."""
+        return list(
+            self.db.scalars(
+                select(Paper)
+                .where(
+                    Paper.project_id == project_id,
+                    (Paper.favorited == True) | (Paper.arxiv_id.like("upload:%")),
+                )
+                .order_by(Paper.created_at.desc())
+            )
+        )
+
+    def toggle_favorite(self, project_id: str, arxiv_id: str, favorited: bool) -> Optional[Paper]:
+        paper = self.db.scalar(
+            select(Paper).where(
+                Paper.project_id == project_id,
+                Paper.arxiv_id == arxiv_id,
+            )
+        )
+        if paper is not None:
+            paper.favorited = favorited
+        return paper

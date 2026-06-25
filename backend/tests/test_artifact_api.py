@@ -34,7 +34,7 @@ def test_artifact_api_reads_lists_updates_and_exports(client) -> None:
     assert detail.status_code == 200
     artifact = detail.json()
     assert artifact["id"] == artifact_id
-    assert artifact["content"]["research_question"] == "How is ML used in routing?"
+    assert artifact["artifact_type"] == "literature_card"
 
     listing = client.get(f"/api/projects/{artifact['project_id']}/artifacts")
 

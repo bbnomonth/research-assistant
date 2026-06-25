@@ -15,11 +15,12 @@ from research_agent.services.structured_output import validate_structured
 
 
 class GuidedReadingTurn(BaseModel):
-    feedback: str = ""
+    feedback: str = ""  # 苏格拉底式反馈
     evidence_notes: List[str] = Field(default_factory=list)
-    next_question: str = ""
+    next_question: str = ""  # 下一个苏格拉底追问
     completed: bool = False
-    learning_summary: str = ""
+    learning_summary: str = ""  # 学习总结
+    socratic_stage: str = ""  # 当前引导阶段: intro/question/method/contribution/limitations/complete
 
 
 @dataclass(frozen=True)
@@ -95,21 +96,27 @@ class GuidedReadingService:
             for item in evidence
         ]
         prompt = (
-            "Act as an evidence-bound guided reading coach. Use only the "
-            "supplied paper evidence. Give concise feedback on the learner's "
-            "answer and ask at most one next question. Mark completed true only "
-            "when the learner has demonstrated a useful understanding of the "
-            "research question, method, and contribution. Return JSON only with "
-            "keys: feedback, evidence_notes, next_question, completed, "
-            "learning_summary.\n"
-            f"Paper title: {paper.title}\n"
-            f"Recent reading dialogue: {json.dumps(history, ensure_ascii=False)}\n"
-            f"Learner answer: {user_input}\n"
-            f"Evidence: {json.dumps(payload, ensure_ascii=False)}"
+            "你是一位循循善诱的苏格拉底式导师，正在引导研究者精读一篇学术论文。用中文回答。\n"
+            "你的职责：通过连续追问，帮助研究者深入理解论文，而非直接给出答案。\n"
+            "每次回复格式：先给予积极肯定，再基于论文原文提出1-2个追问式问题，引导研究者思考。\n"
+            "如果研究者回答充分，则过渡到下一个维度。\n"
+            "引导维度顺序：研究问题（核心问题是什么）→ 研究方法（如何验证假设）→ 贡献与创新（突破了什么）→ 研究局限（有何不足）→ 总结。\n"
+            "只能使用提供的论文原文证据，不要编造信息。返回 JSON：\n"
+            "feedback：本轮苏格拉底反馈（1-3句话，肯定+追问）\n"
+            "evidence_notes：引用原文的证据笔记（列出页码和关键摘录）\n"
+            "next_question：下一个苏格拉底追问（1个问题）\n"
+            "completed：是否完成全部维度（当5个维度都引导完毕后为 true）\n"
+            "learning_summary：本次精读的学习总结（1-3句话）\n"
+            "socratic_stage：当前维度（intro/question/method/contribution/limitations/complete）\n"
+            f"\n论文标题：{paper.title}\n"
+            f"\n对话历史：{json.dumps(history, ensure_ascii=False)}\n"
+            f"\n研究者本次回答：{user_input}\n"
+            f"\n论文原文证据：{json.dumps(payload, ensure_ascii=False)}"
         )
         fallback = GuidedReadingTurn(
-            feedback="本轮引导结果无法解析，请结合原文证据重新回答。",
-            next_question="请概括论文的研究问题，并指出支持该判断的页码。",
+            feedback="结合原文再思考一下：这项研究试图回答的核心问题是什么？",
+            next_question="请结合论文第X页的内容，说明作者如何定义和验证其核心假设。",
+            socratic_stage="question",
         )
         started = time.perf_counter()
         try:
@@ -161,18 +168,18 @@ class GuidedReadingService:
         )
         notes = "\n".join(
             f"- {item}" for item in turn.evidence_notes
-        ) or "- None stated"
+        ) or "- 无"
         markdown = (
-            f"# {paper.title} Guided Reading Note\n\n"
-            f"## Learning Summary\n\n{turn.learning_summary}\n\n"
-            f"## Final Feedback\n\n{turn.feedback}\n\n"
-            f"## Evidence Notes\n\n{notes}\n\n"
-            f"## Source Evidence\n\n{evidence_lines}\n"
+            f"# {paper.title} 精读笔记\n\n"
+            f"## 学习总结\n\n{turn.learning_summary}\n\n"
+            f"## 导师反馈\n\n{turn.feedback}\n\n"
+            f"## 证据笔记\n\n{notes}\n\n"
+            f"## 原文证据\n\n{evidence_lines}\n"
         )
         return ArtifactRepository(self.db).create_artifact(
             project_id=paper.project_id,
             artifact_type="guided_reading_note",
-            title=f"{paper.title} guided reading note",
+            title=f"精读笔记：{paper.title[:30]}",
             content={
                 **turn.model_dump(),
                 "paper_id": paper.id,

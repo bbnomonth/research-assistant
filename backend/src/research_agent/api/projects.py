@@ -1,14 +1,18 @@
 from fastapi import APIRouter, HTTPException, Request
 
 from research_agent.repositories.conversations import ConversationRepository
+from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.projects import (
     MessageListResponse,
     MessageResponse,
+    PaperListResponse,
+    PaperSummary,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
     SessionListResponse,
     SessionResponse,
+    SessionUpdateRequest,
 )
 
 
@@ -90,4 +94,65 @@ def list_session_messages(session_id: str, request: Request):
             "messages": [
                 MessageResponse.from_model(message) for message in messages
             ]
+        }
+
+
+@router.patch(
+    "/sessions/{session_id}",
+    response_model=SessionResponse,
+)
+def update_session(
+    session_id: str,
+    payload: SessionUpdateRequest,
+    request: Request,
+):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        try:
+            session = ConversationRepository(db).rename_session(
+                session_id,
+                payload.title or "",
+            )
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        db.commit()
+        return SessionResponse.from_model(session)
+
+
+@router.delete(
+    "/sessions/{session_id}",
+    status_code=204,
+)
+def delete_session(session_id: str, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        repository = ConversationRepository(db)
+        if repository.get_session(session_id) is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        repository.db.query(Message).filter(
+            Message.session_id == session_id
+        ).delete(synchronize_session=False)
+        repository.db.delete(repository.get_session(session_id))
+        db.commit()
+    return None
+
+
+@router.get(
+    "/projects/{project_id}/papers",
+    response_model=PaperListResponse,
+)
+def list_project_papers(
+    project_id: str,
+    request: Request,
+    limit: int = 50,
+):
+    safe_limit = max(1, min(limit, 200))
+    database = request.app.state.database
+    with database.session_factory() as db:
+        repository = ConversationRepository(db)
+        if repository.get_project(project_id) is None:
+            raise HTTPException(status_code=404, detail="project not found")
+        papers = PaperRepository(db).list_for_project(project_id, limit=safe_limit)
+        return {
+            "papers": [PaperSummary.from_model(paper) for paper in papers]
         }

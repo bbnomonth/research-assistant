@@ -12,12 +12,29 @@ class ApiFakeGateway:
 
     async def stream_chat(self, messages):
         prompt = messages[-1]["content"]
-        if "英文 arXiv 检索式" in prompt:
+        if "英文检索式" in prompt:
             yield '{"english_query":"vehicle routing"}'
         elif "候选文献" in prompt:
             yield (
                 '[{"arxiv_id":"2401.00001","reason":"高度相关",'
                 '"purpose_labels":["方法相似"]}]'
+            )
+        elif "文献卡片" in prompt:
+            yield (
+                '{"research_topic":"Vehicle routing",'
+                '"research_question":"How is ML used in routing?",'
+                '"method":"Review of vehicle routing methods",'
+                '"contribution":"Provides structured analysis of routing literature",'
+                '"risks":["Evidence limited to 5 papers","Abstract only"]}'
+            )
+        elif "对比" in prompt or "comparison" in prompt.lower() or "Paper Comparison" in prompt:
+            yield (
+                '{"overview":"Both papers study vehicle routing optimization.",'
+                '"findings":[{"dimension":"Method",'
+                '"summary":"They use different routing methods.",'
+                '"evidence_notes":["Evidence is page-bound."]}],'
+                '"transferable_insights":["Compare method fit before reuse."],'
+                '"risks":["Evidence is limited"]}'
             )
         elif "evidence-bound literature card" in prompt:
             yield (

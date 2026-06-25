@@ -1,10 +1,15 @@
 import json
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from research_agent.db.models import ConversationSession, Message, Project
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class ConversationRepository:
@@ -111,9 +116,56 @@ class ConversationRepository:
             self.db.scalars(
                 select(ConversationSession)
                 .where(ConversationSession.project_id == project_id)
-                .order_by(ConversationSession.created_at.desc())
+                .order_by(ConversationSession.updated_at.desc())
             )
         )
+
+    def get_session_with_messages(
+        self,
+        session_id: str,
+    ) -> Optional[Tuple[ConversationSession, List[Message]]]:
+        session = self.db.get(ConversationSession, session_id)
+        if session is None:
+            return None
+        messages = list(
+            self.db.scalars(
+                select(Message)
+                .where(Message.session_id == session_id)
+                .order_by(Message.sequence)
+            )
+        )
+        return session, messages
+
+    def auto_title_session(
+        self,
+        session_id: str,
+        title: str,
+    ) -> ConversationSession:
+        session = self.db.get(ConversationSession, session_id)
+        if session is None:
+            raise LookupError("session not found")
+        session.title = title.strip()[:200]
+        session.updated_at = utc_now()
+        self.db.flush()
+        return session
+
+    def rename_session(
+        self,
+        session_id: str,
+        title: str,
+    ) -> ConversationSession:
+        session = self.db.get(ConversationSession, session_id)
+        if session is None:
+            raise LookupError("session not found")
+        session.title = title.strip()[:200]
+        session.updated_at = utc_now()
+        self.db.flush()
+        return session
+
+    def touch_session(self, session_id: str) -> None:
+        session = self.db.get(ConversationSession, session_id)
+        if session is not None:
+            session.updated_at = utc_now()
 
     def list_messages(self, session_id: str) -> List[Message]:
         return list(

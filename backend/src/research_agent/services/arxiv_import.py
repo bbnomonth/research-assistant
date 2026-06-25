@@ -63,6 +63,7 @@ class ArxivPdfImportService:
         max_bytes: int = 10 * 1024 * 1024,
         max_pages: int = 60,
         ocr_service: Optional[OcrService] = None,
+        scrub_pii_enabled: bool = False,
     ) -> None:
         self.db = db
         self.upload_dir = upload_dir
@@ -70,6 +71,7 @@ class ArxivPdfImportService:
         self.max_bytes = max_bytes
         self.max_pages = max_pages
         self.ocr_service = ocr_service
+        self.scrub_pii_enabled = scrub_pii_enabled
 
     def import_pdf(self, paper_id: str) -> ArxivImportResult:
         return self.import_pdf_for_task(paper_id, task_id=None)
@@ -83,7 +85,7 @@ class ArxivPdfImportService:
         if paper is None:
             raise LookupError("paper not found")
         if paper.arxiv_id.startswith("upload:"):
-            raise ValueError("uploaded papers cannot be imported from arXiv")
+            raise ValueError("uploaded papers cannot be imported from URL")
         parsed = urlparse(paper.pdf_url)
         if parsed.scheme not in {"http", "https"}:
             raise ValueError("paper PDF URL must use HTTP or HTTPS")
@@ -115,6 +117,7 @@ class ArxivPdfImportService:
             chunks = PdfProcessor(
                 max_bytes=self.max_bytes,
                 ocr_service=self.ocr_service,
+                scrub_pii_enabled=self.scrub_pii_enabled,
             ).extract_text_chunks(
                 stored_path,
                 max_pages=self.max_pages,
@@ -139,6 +142,6 @@ class ArxivPdfImportService:
                     task.id,
                     "failed",
                     progress=0,
-                    error_message="arXiv PDF import failed",
+                    error_message="PDF import failed",
                 )
             raise

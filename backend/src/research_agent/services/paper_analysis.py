@@ -148,24 +148,20 @@ class PaperAnalysisService:
         )
         content = comparison.model_dump()
         content["papers"] = [
-            {
-                "paper_id": paper.id,
-                "title": paper.title,
-            }
-            for paper in papers
+            {"paper_id": p.id, "title": p.title}
+            for p in papers
         ]
-        content["evidence"] = {
-            paper_id: [
+        content["evidence"] = {}
+        for pid, ev_list in evidence_by_paper.items():
+            content["evidence"][pid] = [
                 {
                     "chunk_id": item.chunk_id,
                     "page_number": item.page_number,
                     "section": item.section,
                     "is_ocr": item.is_ocr,
                 }
-                for item in evidence
+                for item in ev_list
             ]
-            for paper_id, evidence in evidence_by_paper.items()
-        }
         artifact = ArtifactRepository(self.db).create_artifact(
             project_id=papers[0].project_id,
             artifact_type="paper_comparison",
@@ -226,12 +222,15 @@ class PaperAnalysisService:
             for item in evidence
         ]
         prompt = (
-            "Create an evidence-bound literature card from the supplied paper "
-            "chunks. Use only the evidence. If a field is not supported, leave "
-            "it empty. Return JSON only with keys: research_topic, "
-            "research_question, method, contribution, risks.\n"
-            f"Title: {title}\n"
-            f"Evidence: {json.dumps(payload, ensure_ascii=False)}"
+            "你是一位严谨的学术论文评审专家。请基于论文原文（Evidence），为研究者生成一份结构化的文献分析卡片。用中文回答。\n"
+            "只能使用提供的 Evidence 内容，不要编造任何信息。返回 JSON，字段如下：\n"
+            "research_topic：研究主题（3-10个字）\n"
+            "research_question：核心研究问题（1-2句话）\n"
+            "method：主要研究方法（1-3句话）\n"
+            "contribution：主要贡献与创新点（1-3句话）\n"
+            "risks：研究局限或潜在风险（列出2-3条）\n"
+            f"\n论文标题：{title}\n"
+            f"\nEvidence：{json.dumps(payload, ensure_ascii=False)}"
         )
         fallback = LiteratureCard(
             risks=["Model output could not be parsed; manual review is required."],
@@ -287,12 +286,13 @@ class PaperAnalysisService:
             for paper in papers
         ]
         prompt = (
-            "Create an evidence-bound paper comparison from the supplied paper "
-            "chunks. Use only the evidence. Compare research question, method, "
-            "data, and contribution when supported. Return JSON only with keys: "
-            "overview, findings, transferable_insights, risks. findings must be "
-            "a list of objects with dimension, summary, evidence_notes.\n"
-            f"Papers: {json.dumps(payload, ensure_ascii=False)}"
+            "你是一位严谨的学术论文评审专家。请基于多篇论文的原文（Evidence），生成一份结构化的对比分析报告。用中文回答。\n"
+            "只能使用提供的 Evidence 内容，不要编造信息。返回 JSON，字段如下：\n"
+            "overview：总体概述（1-2句话）\n"
+            "findings：对比发现，数组，每项包含 dimension（对比维度）、summary（对比总结）、evidence_notes（证据说明）\n"
+            "transferable_insights：可迁移的洞察（列出2-3条）\n"
+            "risks：潜在风险（列出2-3条）\n"
+            f"\n论文列表：{json.dumps(payload, ensure_ascii=False)}"
         )
         fallback = PaperComparison(
             risks=["Model output could not be parsed; manual review is required."],

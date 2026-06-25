@@ -5,6 +5,8 @@ from typing import Dict, List, Optional, Protocol
 
 import fitz
 
+from research_agent.services.privacy import scrub_pii
+
 
 class PdfTooLargeError(ValueError):
     pass
@@ -20,9 +22,11 @@ class PdfProcessor:
         self,
         max_bytes: int = 10 * 1024 * 1024,
         ocr_service: Optional[OcrService] = None,
+        scrub_pii_enabled: bool = False,
     ) -> None:
         self.max_bytes = max_bytes
         self.ocr_service = ocr_service
+        self.scrub_pii_enabled = scrub_pii_enabled
 
     def extract_text_chunks(
         self,
@@ -48,7 +52,7 @@ class PdfProcessor:
                         "page_number": page_index + 1,
                         "chunk_index": chunk_index,
                         "section": "",
-                        "text": text,
+                        "text": scrub_pii(text) if self.scrub_pii_enabled else text,
                         "is_ocr": False,
                     }
                 )
@@ -90,7 +94,7 @@ class PdfProcessor:
                         "page_number": page_index + 1,
                         "chunk_index": next_chunk_index,
                         "section": "",
-                        "text": text,
+                        "text": scrub_pii(text) if self.scrub_pii_enabled else text,
                         "is_ocr": True,
                     }
                 )

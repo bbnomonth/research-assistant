@@ -46,7 +46,7 @@ class ResearchDiagnosisService:
         self.db = db
         self.model_gateway = model_gateway
 
-    async def diagnose(self, project_id: str, user_input: str) -> DiagnosisResult:
+    async     def diagnose(self, project_id: str, user_input: str) -> DiagnosisResult:
         papers = PaperRepository(self.db).list_for_project(project_id, limit=5)
         chunk_repo = PaperChunkRepository(self.db)
         evidence = {
@@ -100,14 +100,18 @@ class ResearchDiagnosisService:
             for paper in papers
         ]
         prompt = (
-            "Create a research-design diagnosis for a novice researcher. "
-            "Separate evidence-supported judgements from reasonable inferences. "
-            "Use supplied paper evidence when available; otherwise state evidence "
-            "limitations. Return JSON only with keys: topic_summary, "
-            "evidence_supported_judgements, reasonable_inferences, gaps, risks, "
-            "next_questions.\n"
-            f"User material: {user_input}\n"
-            f"Project paper evidence: {json.dumps(payload, ensure_ascii=False)}"
+            "你是一位资深的研究方法论导师。请基于用户输入和项目中的论文证据，对研究者的课题进行苏格拉底式诊断分析。用中文回答。\n"
+            "分析时请采用苏格拉底提问法：通过连续追问帮助研究者发现研究中的空白、逻辑漏洞和未检验的假设。\n"
+            "只能使用提供的 Evidence 内容；如证据不足，明确说明局限性。\n"
+            "返回 JSON，字段如下：\n"
+            "topic_summary：研究课题概述（1-2句话）\n"
+            "evidence_supported_judgements：有证据支撑的判断（列出3-5条）\n"
+            "reasonable_inferences：合理推断（列出2-3条，需标注为推断）\n"
+            "gaps：研究空白与不足（列出3-5条苏格拉底式追问）\n"
+            "risks：研究风险（列出2-3条）\n"
+            "next_questions：后续值得探索的问题（列出2-3条）\n"
+            f"\n用户材料：{user_input}\n"
+            f"\n项目论文证据：{json.dumps(payload, ensure_ascii=False)}"
         )
         fallback = ResearchDiagnosis(
             topic_summary=user_input,

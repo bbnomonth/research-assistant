@@ -19,11 +19,13 @@ from research_agent.repositories.paper_chunks import PaperChunkRepository
 from research_agent.repositories.tasks import TaskRepository
 from research_agent.schemas.papers import (
     EvidenceSearchResponse,
+    FavoritePaperRequest,
     PaperComparisonRequest,
     PaperComparisonResponse,
     QuickAnalysisResponse,
     UploadResponse,
 )
+from research_agent.repositories.papers import PaperRepository
 from research_agent.services.paper_analysis import PaperAnalysisService
 from research_agent.services.arxiv_import import ArxivPdfImportService
 from research_agent.services.pdf_processing import PdfProcessor, PdfTooLargeError
@@ -88,8 +90,37 @@ async def upload_pdf(
                 "id": task.id,
                 "status": task.status,
                 "progress": task.progress,
+                "paper_id": task.paper_id,
                 "error_message": task.error_message,
             },
+        }
+
+
+@router.post("/papers/compare", response_model=PaperComparisonResponse)
+async def compare_papers(payload: PaperComparisonRequest, request: Request):
+    model_gateway = request.app.state.model_gateway
+    if model_gateway is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Model gateway is not configured.",
+        )
+
+    database = request.app.state.database
+    with database.session_factory() as db:
+        try:
+            result = await PaperAnalysisService(
+                db=db,
+                model_gateway=model_gateway,
+            ).compare_papers(payload.paper_ids)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        db.commit()
+        return {
+            "artifact_id": result.artifact.id,
+            "title": result.artifact.title,
+            "evidence_pages": result.evidence_pages,
         }
 
 
@@ -98,7 +129,20 @@ def search_evidence(paper_id: str, q: str, request: Request):
     database = request.app.state.database
     with database.session_factory() as db:
         results = PaperChunkRepository(db).search(paper_id, q)
-        return {"results": [item.__dict__ for item in results]}
+        return {"results": [item.as_dict() for item in results]}
+
+
+@router.post("/papers/favorite")
+def favorite_paper(body: FavoritePaperRequest, request: Request):
+    """Toggle favorite status of a paper by arxiv_id within the specified project."""
+    database = request.app.state.database
+    with database.session_factory() as db:
+        repo = PaperRepository(db)
+        paper = repo.toggle_favorite(body.project_id, body.arxiv_id, body.favorited)
+        db.commit()
+        if paper is None:
+            return {"ok": False, "message": "paper not found in this project"}
+        return {"ok": True, "favorited": paper.favorited}
 
 
 @router.post("/papers/{paper_id}/import-pdf", response_model=UploadResponse)
@@ -119,7 +163,7 @@ def import_arxiv_pdf(
         }:
             raise HTTPException(
                 status_code=400,
-                detail="paper does not have an importable arXiv PDF URL",
+                detail="paper does not have an importable PDF URL",
             )
         task = TaskRepository(db).create_task(
             "import_arxiv_pdf",
@@ -138,6 +182,7 @@ def import_arxiv_pdf(
                 "id": task.id,
                 "status": task.status,
                 "progress": task.progress,
+                "paper_id": task.paper_id,
                 "error_message": task.error_message,
             },
         }
@@ -172,34 +217,6 @@ async def quick_analysis(paper_id: str, request: Request):
         }
 
 
-@router.post("/papers/compare", response_model=PaperComparisonResponse)
-async def compare_papers(payload: PaperComparisonRequest, request: Request):
-    model_gateway = request.app.state.model_gateway
-    if model_gateway is None:
-        raise HTTPException(
-            status_code=503,
-            detail="Model gateway is not configured.",
-        )
-
-    database = request.app.state.database
-    with database.session_factory() as db:
-        try:
-            result = await PaperAnalysisService(
-                db=db,
-                model_gateway=model_gateway,
-            ).compare_papers(payload.paper_ids)
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        db.commit()
-        return {
-            "artifact_id": result.artifact.id,
-            "title": result.artifact.title,
-            "evidence_pages": result.evidence_pages,
-        }
-
-
 @router.get("/tasks/{task_id}")
 def get_task(task_id: str, request: Request):
     database = request.app.state.database
@@ -211,6 +228,7 @@ def get_task(task_id: str, request: Request):
             "id": task.id,
             "status": task.status,
             "progress": task.progress,
+            "paper_id": task.paper_id,
             "error_message": task.error_message,
         }
 
@@ -230,6 +248,7 @@ def cancel_task(task_id: str, request: Request):
             "id": task.id,
             "status": task.status,
             "progress": task.progress,
+            "paper_id": task.paper_id,
             "error_message": task.error_message,
         }
 
@@ -269,6 +288,7 @@ def retry_task(
             "id": task.id,
             "status": task.status,
             "progress": task.progress,
+            "paper_id": task.paper_id,
             "error_message": task.error_message,
         }
 
@@ -302,6 +322,7 @@ def _process_uploaded_pdf(
             chunks = PdfProcessor(
                 max_bytes=settings.pdf_max_bytes,
                 ocr_service=app.state.ocr_service,
+                scrub_pii_enabled=app.state.privacy["pii_scrub"],
             ).extract_text_chunks(
                 stored_path,
                 max_pages=settings.pdf_max_pages,
@@ -357,6 +378,7 @@ def _process_arxiv_pdf(app, task_id: str, paper_id: str) -> None:
                 max_bytes=settings.pdf_max_bytes,
                 max_pages=settings.pdf_max_pages,
                 ocr_service=app.state.ocr_service,
+                scrub_pii_enabled=app.state.privacy["pii_scrub"],
             ).import_pdf_for_task(paper_id, task_id)
             db.commit()
         except Exception:

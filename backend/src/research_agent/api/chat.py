@@ -11,14 +11,13 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 @router.post("/stream")
 def stream_chat(payload: ChatRequest, request: Request):
     model_gateway = request.app.state.model_gateway
-    if model_gateway is None:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "尚未配置百炼 API Key。请在 backend/.env 中填写"
-                " DASHSCOPE_API_KEY 后重启服务。"
-            ),
+    privacy = request.app.state.privacy
+    if model_gateway is None and not privacy["local_only"]:
+        detail = (
+            "尚未配置百炼 API Key。请在 backend/.env 中填写"
+            " DASHSCOPE_API_KEY 后重启服务。"
         )
+        raise HTTPException(status_code=503, detail=detail)
 
     async def event_generator():
         database = request.app.state.database

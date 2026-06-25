@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from research_agent.api.artifacts import router as artifacts_router
 from research_agent.api.chat import router as chat_router
@@ -22,6 +23,7 @@ from research_agent.services.arxiv_search import (
 )
 from research_agent.services.arxiv_import import HttpxPdfDownloader, PdfDownloader
 from research_agent.repositories.tasks import TaskRepository
+from research_agent.services.privacy import cleanup_expired_conversations
 
 
 def create_app(
@@ -56,6 +58,10 @@ def create_app(
         database.create_schema()
         with database.session_factory() as db:
             TaskRepository(db).mark_active_interrupted()
+            cleanup_expired_conversations(
+                db,
+                active_settings.privacy_data_ttl_days,
+            )
             db.commit()
         try:
             yield
@@ -71,12 +77,24 @@ def create_app(
         version="0.1.0",
         lifespan=lifespan,
     )
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):\d+$",
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.settings = active_settings
     app.state.database = database
     app.state.model_gateway = model_gateway
     app.state.arxiv_provider = arxiv_provider
     app.state.ocr_service = ocr_service
     app.state.pdf_downloader = pdf_downloader
+    app.state.privacy = {
+        "pii_scrub": active_settings.privacy_pii_scrub,
+        "local_only": active_settings.privacy_local_only,
+        "data_ttl_days": active_settings.privacy_data_ttl_days,
+    }
     app.include_router(health_router)
     app.include_router(chat_router)
     app.include_router(papers_router)

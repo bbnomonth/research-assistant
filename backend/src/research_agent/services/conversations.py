@@ -9,32 +9,85 @@ from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.chat import ChatMode, StreamEvent
 from research_agent.services.arxiv_search import ArxivSearchProvider
 from research_agent.services.guided_reading import GuidedReadingService
-from research_agent.services.literature import LiteratureDiscoveryService
+from research_agent.services.literature import (
+    LiteratureDiscoveryService,
+    LocalLiteratureDiscoveryService,
+)
 from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
 )
 from research_agent.services.research_diagnosis import ResearchDiagnosisService
-from research_agent.workflows.router import build_router_graph
-
-
-PENDING_WORKFLOW_MESSAGE = (
-    "该模式已经完成路由与数据结构设计，将在后续阶段接入具体工作流。"
+from research_agent.services.intent_classifier import (
+    classify_by_keywords,
+    classify_intent,
 )
+
+
+def derive_session_title(content: str, max_length: int = 24) -> str:
+    """Simple prefix-based title when model is unavailable."""
+    cleaned = content.strip().replace("\n", " ").replace("\r", " ")
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return "新会话"
+    if len(cleaned) > max_length:
+        cleaned = cleaned[: max_length - 1].rstrip() + "…"
+    return cleaned
+
+
+async def generate_session_title_from_model(
+    gateway: "ModelGateway",
+    content: str,
+) -> str:
+    """Use the LLM to extract a concise semantic title from the first message."""
+    prompt = (
+        "Given the following research question or statement, generate a concise Chinese title "
+        "for this conversation session. The title should be 8-15 Chinese characters, "
+        "accurately reflecting the core topic. Return ONLY the title text, no quotes, no explanation.\n\n"
+        f"User message: {content[:500]}"
+    )
+    try:
+        parts = [
+            token
+            async for token in gateway.stream_chat(
+                [{"role": "user", "content": prompt}]
+            )
+        ]
+        title = "".join(parts).strip()
+        title = title.strip("\"'，。、：；！？「」『』（）[]{}")
+        if not title or len(title) < 3:
+            return derive_session_title(content)
+        if len(title) > 20:
+            title = title[:19].rstrip() + "…"
+        return title
+    except Exception:
+        return derive_session_title(content)
 
 
 class ConversationService:
     def __init__(
         self,
         db: Session,
-        model_gateway: ModelGateway,
+        model_gateway: Optional[ModelGateway],
         arxiv_provider: Optional[ArxivSearchProvider] = None,
     ) -> None:
         self.db = db
         self.model_gateway = model_gateway
         self.arxiv_provider = arxiv_provider
         self.repository = ConversationRepository(db)
-        self.router_graph = build_router_graph()
+
+    async def _classify_mode(
+        self,
+        content: str,
+        mode_override: Optional[ChatMode],
+    ) -> ChatMode:
+        """Classify the user's intent using LLM when available, else keyword fallback."""
+        if mode_override is not None:
+            return mode_override
+        if self.model_gateway is not None:
+            classification = await classify_intent(self.model_gateway, content)
+            return classification.mode
+        return classify_by_keywords(content)
 
     async def stream_reply(
         self,
@@ -49,16 +102,26 @@ class ConversationService:
             session_id,
         )
         history = self.repository.list_recent_messages(conversation.id, 20)
+
+        existing_messages = self.repository.list_messages(conversation.id)
+        is_first_user_message = not any(
+            message.role == "user" for message in existing_messages
+        )
         self.repository.add_message(conversation.id, "user", content)
+
+        if is_first_user_message and not conversation.title:
+            if self.model_gateway is not None:
+                conversation.title = await generate_session_title_from_model(
+                    self.model_gateway,
+                    content,
+                )
+            else:
+                conversation.title = derive_session_title(content)
+
+        self.repository.touch_session(conversation.id)
         self.db.commit()
 
-        state = self.router_graph.invoke(
-            {
-                "content": content,
-                "mode_override": mode_override,
-            }
-        )
-        mode = state["mode"]
+        mode = await self._classify_mode(content, mode_override)
 
         yield StreamEvent(event="mode", data={"mode": mode.value})
         yield StreamEvent(
@@ -66,6 +129,7 @@ class ConversationService:
             data={
                 "project_id": project.id,
                 "session_id": conversation.id,
+                "title": conversation.title or derive_session_title(content),
             },
         )
 
@@ -86,7 +150,7 @@ class ConversationService:
                     event="error",
                     data={
                         "message": (
-                            "arXiv 文献检索暂时不可用，请稍后重试；"
+                            "论文检索服务暂时不可用，请稍后重试；"
                             "普通问答和本地论文功能不受影响。"
                         )
                     },
@@ -94,6 +158,17 @@ class ConversationService:
             return
 
         if mode is ChatMode.RESEARCH_DIAGNOSIS:
+            if self.model_gateway is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "研究诊断需要调用大模型，请先在后台配置 API Key 后重启服务。"
+                        ),
+                        "code": "MODEL_NOT_CONFIGURED",
+                    },
+                )
+                return
             try:
                 async for event in self._stream_research_diagnosis(
                     project.id,
@@ -120,8 +195,21 @@ class ConversationService:
                     event="error",
                     data={
                         "message": (
-                            "引导式精读需要显式提供 paper_id，系统不会自动猜测论文。"
-                        )
+                            "请先在「论文与证据」页面选择或上传一篇论文，"
+                            "再使用引导式精读功能。"
+                        ),
+                        "code": "PAPER_READING_REQUIRES_PAPER",
+                    },
+                )
+                return
+            if self.model_gateway is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "引导式精读需要调用大模型，请先在后台配置 API Key 后重启服务。"
+                        ),
+                        "code": "MODEL_NOT_CONFIGURED",
                     },
                 )
                 return
@@ -136,10 +224,23 @@ class ConversationService:
                     yield event
             except (LookupError, ValueError) as exc:
                 self.db.rollback()
-                yield StreamEvent(
-                    event="error",
-                    data={"message": str(exc)},
-                )
+                error_msg = str(exc)
+                if "no parsed evidence" in error_msg.lower():
+                    yield StreamEvent(
+                        event="error",
+                        data={
+                            "message": (
+                                "该论文尚未完成解析，暂时无法进行引导式精读。"
+                                "请在「论文与证据」页面确认该论文状态为「已完成」。"
+                            ),
+                            "code": "PAPER_NOT_PARSED",
+                        },
+                    )
+                else:
+                    yield StreamEvent(
+                        event="error",
+                        data={"message": error_msg, "code": "GUIDED_READING_ERROR"},
+                    )
             except Exception:
                 self.db.rollback()
                 yield StreamEvent(
@@ -148,26 +249,20 @@ class ConversationService:
                         "message": (
                             "引导式精读暂时不可用，请稍后重试；"
                             "已保存的论文和阅读记录不会受到影响。"
-                        )
+                        ),
+                        "code": "GUIDED_READING_ERROR",
                     },
                 )
             return
 
-        if mode is not ChatMode.GENERAL_QA:
-            self.repository.add_message(
-                conversation.id,
-                "assistant",
-                PENDING_WORKFLOW_MESSAGE,
-                mode=mode.value,
-            )
-            self.db.commit()
+        if self.model_gateway is None:
             yield StreamEvent(
-                event="token",
-                data={"content": PENDING_WORKFLOW_MESSAGE},
-            )
-            yield StreamEvent(
-                event="done",
-                data={"content": PENDING_WORKFLOW_MESSAGE},
+                event="error",
+                data={
+                    "message": (
+                        "模型暂不可用，请检查后台配置后重启服务。"
+                    )
+                },
             )
             return
 
@@ -234,21 +329,27 @@ class ConversationService:
     ) -> AsyncIterator[StreamEvent]:
         yield StreamEvent(
             event="stage",
-            data={"name": "query_generation", "label": "生成英文检索式"},
+            data={"name": "query_generation", "label": "生成检索式"},
         )
         yield StreamEvent(
             event="stage",
-            data={"name": "arxiv_search", "label": "检索 arXiv"},
+            data={"name": "arxiv_search", "label": "检索论文数据库"},
         )
-        service = LiteratureDiscoveryService(
-            model_gateway=self.model_gateway,
-            arxiv_provider=self.arxiv_provider,
-            db=self.db,
-        )
-        result = await service.discover(content)
+        if self.model_gateway is None:
+            service = LocalLiteratureDiscoveryService(self.arxiv_provider)
+            result = await service.discover(content)
+            artifact = None
+        else:
+            svc = LiteratureDiscoveryService(
+                model_gateway=self.model_gateway,
+                arxiv_provider=self.arxiv_provider,
+                db=self.db,
+                project_id=project_id,
+            )
+            result, artifact = await svc.discover_with_artifact(content)
         yield StreamEvent(
             event="stage",
-            data={"name": "recommendation", "label": "筛选推荐文献"},
+            data={"name": "recommendation", "label": "生成推荐卡片"},
         )
         yield StreamEvent(
             event="stage",
@@ -258,10 +359,10 @@ class ConversationService:
             project_id,
             result.recommendations,
         )
+        rec_count = len(result.recommendations)
         summary = (
-            f"已使用检索式 `{result.query}` 检索 arXiv，"
-            f"从 {len(result.candidates)} 篇候选中推荐"
-            f" {len(result.recommendations)} 篇文献。"
+            f"已根据你的问题检索了论文数据库，"
+            f"从 {len(result.candidates)} 篇候选中筛选出 {rec_count} 篇推荐文献。"
         )
         self.repository.add_message(
             session_id,
@@ -274,6 +375,16 @@ class ConversationService:
             event="search_results",
             data=result.model_dump(),
         )
+        if artifact is not None:
+            yield StreamEvent(
+                event="artifact",
+                data={
+                    "artifact_id": artifact.id,
+                    "artifact_type": artifact.artifact_type,
+                    "title": artifact.title,
+                    "evidence_pages": [],
+                },
+            )
         yield StreamEvent(event="token", data={"content": summary})
         yield StreamEvent(event="done", data={"content": summary})
 

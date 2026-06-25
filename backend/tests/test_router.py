@@ -18,13 +18,20 @@ def test_rule_first_classification(message, expected) -> None:
     assert classify_mode(message) is expected
 
 
-def test_graph_dispatches_literature_mode() -> None:
+def test_graph_classifies_mode_from_message() -> None:
     graph = build_router_graph()
 
     result = graph.invoke({"content": "搜索人工智能论文"})
 
     assert result["mode"] == ChatMode.LITERATURE_DISCOVERY
-    assert result["workflow_status"] == "not_implemented"
+
+
+def test_graph_classifies_general_qa() -> None:
+    graph = build_router_graph()
+
+    result = graph.invoke({"content": "什么是运筹学"})
+
+    assert result["mode"] == ChatMode.GENERAL_QA
 
 
 def test_mode_override_wins() -> None:

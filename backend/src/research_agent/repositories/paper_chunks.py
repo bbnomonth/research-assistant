@@ -15,6 +15,15 @@ class EvidenceResult:
     text: str
     is_ocr: bool
 
+    def as_dict(self) -> dict:
+        return {
+            "chunk_id": self.chunk_id,
+            "page_number": self.page_number,
+            "section": self.section,
+            "text": self.text,
+            "is_ocr": self.is_ocr,
+        }
+
 
 class PaperChunkRepository:
     def __init__(self, db: Session) -> None:

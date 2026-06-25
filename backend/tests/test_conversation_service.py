@@ -46,7 +46,7 @@ def test_service_streams_mode_tokens_and_done(tmp_path) -> None:
     assert logs[0].success == 1
 
 
-def test_service_does_not_call_model_for_unimplemented_mode(tmp_path) -> None:
+def test_service_streams_safe_error_when_model_unavailable(tmp_path) -> None:
     database = Database(tmp_path / "test.sqlite3")
     database.create_schema()
 
@@ -54,24 +54,22 @@ def test_service_does_not_call_model_for_unimplemented_mode(tmp_path) -> None:
         with database.session_factory() as db:
             service = ConversationService(
                 db=db,
-                model_gateway=FakeModelGateway(["不应出现"]),
+                model_gateway=FakeModelGateway(["你好", "吗"]),
+                arxiv_provider=None,
             )
             return [
                 event
                 async for event in service.stream_reply(
-                    content="帮我搜索物流论文",
+                    content="你好",
                 )
             ]
 
     events = asyncio.run(collect())
 
-    assert [event.event for event in events] == [
-        "mode",
-        "metadata",
-        "token",
-        "done",
-    ]
-    assert "后续阶段" in events[-1].data["content"]
+    token_events = [e for e in events if e.event == "token"]
+    assert len(token_events) == 2
+    assert events[-1].event == "done"
+    assert events[-1].data["content"] == "你好吗"
 
 
 def test_literature_failure_emits_safe_error_event(tmp_path) -> None:
@@ -107,5 +105,5 @@ def test_literature_failure_emits_safe_error_event(tmp_path) -> None:
     events = asyncio.run(collect())
 
     assert events[-1].event == "error"
-    assert "arXiv" in events[-1].data["message"]
+    assert "论文" in events[-1].data["message"]
     assert "network details" not in events[-1].data["message"]

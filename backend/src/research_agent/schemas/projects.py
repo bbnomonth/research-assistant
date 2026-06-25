@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-from research_agent.db.models import ConversationSession, Message, Project
+from research_agent.db.models import ConversationSession, Message, Paper, Project
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -40,11 +40,17 @@ class ProjectListResponse(BaseModel):
     projects: List[ProjectResponse]
 
 
+class SessionUpdateRequest(BaseModel):
+    title: Optional[str] = Field(default=None, min_length=1, max_length=200)
+
+
 class SessionResponse(BaseModel):
     id: str
     project_id: str
+    title: str
     summary: str
     created_at: datetime
+    updated_at: datetime
 
     @classmethod
     def from_model(
@@ -54,8 +60,10 @@ class SessionResponse(BaseModel):
         return cls(
             id=session.id,
             project_id=session.project_id,
+            title=session.title or "",
             summary=session.summary,
             created_at=session.created_at,
+            updated_at=session.updated_at,
         )
 
 
@@ -87,3 +95,43 @@ class MessageResponse(BaseModel):
 
 class MessageListResponse(BaseModel):
     messages: List[MessageResponse]
+
+
+class PaperSummary(BaseModel):
+    id: str
+    project_id: str
+    arxiv_id: str
+    title: str
+    authors_json: str
+    abstract: str
+    published: str
+    categories_json: str
+    entry_url: str
+    pdf_url: str
+    recommendation_reason: str
+    purpose_labels_json: str
+    created_at: datetime
+    updated_at: datetime
+
+    @classmethod
+    def from_model(cls, paper: Paper) -> "PaperSummary":
+        return cls(
+            id=paper.id,
+            project_id=paper.project_id,
+            arxiv_id=paper.arxiv_id,
+            title=paper.title,
+            authors_json=paper.authors_json,
+            abstract=paper.abstract,
+            published=paper.published,
+            categories_json=paper.categories_json,
+            entry_url=paper.entry_url,
+            pdf_url=paper.pdf_url,
+            recommendation_reason=paper.recommendation_reason,
+            purpose_labels_json=paper.purpose_labels_json,
+            created_at=paper.created_at,
+            updated_at=paper.updated_at,
+        )
+
+
+class PaperListResponse(BaseModel):
+    papers: List[PaperSummary] = Field(default_factory=list)

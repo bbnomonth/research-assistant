@@ -1,6 +1,6 @@
 from typing import Optional
 
-from langgraph.graph import END, START, StateGraph
+from langgraph.graph import START, StateGraph
 from typing_extensions import TypedDict
 
 from research_agent.schemas.chat import ChatMode
@@ -19,8 +19,13 @@ KEYWORDS = {
         "检索",
         "文献推荐",
         "找文献",
-        "arxiv",
         "search papers",
+        "最新论文",
+        "论文检索",
+        "查找论文",
+        "帮我找",
+        "有什么相关",
+        "推荐一些",
     ),
     ChatMode.PAPER_READING: (
         "pdf",
@@ -55,40 +60,8 @@ def _route(state: RouterState) -> RouterState:
     return {"mode": mode}
 
 
-def _general_qa(_: RouterState) -> RouterState:
-    return {"workflow_status": "ready"}
-
-
-def _not_implemented(_: RouterState) -> RouterState:
-    return {"workflow_status": "not_implemented"}
-
-
-def _mode_name(state: RouterState) -> str:
-    return state["mode"].value
-
-
 def build_router_graph():
     builder = StateGraph(RouterState)
     builder.add_node("route", _route)
-    builder.add_node(ChatMode.GENERAL_QA.value, _general_qa)
-    builder.add_node(ChatMode.LITERATURE_DISCOVERY.value, _not_implemented)
-    builder.add_node(ChatMode.PAPER_READING.value, _not_implemented)
-    builder.add_node(ChatMode.RESEARCH_DIAGNOSIS.value, _not_implemented)
     builder.add_edge(START, "route")
-    builder.add_conditional_edges(
-        "route",
-        _mode_name,
-        {
-            ChatMode.GENERAL_QA.value: ChatMode.GENERAL_QA.value,
-            ChatMode.LITERATURE_DISCOVERY.value:
-                ChatMode.LITERATURE_DISCOVERY.value,
-            ChatMode.PAPER_READING.value: ChatMode.PAPER_READING.value,
-            ChatMode.RESEARCH_DIAGNOSIS.value:
-                ChatMode.RESEARCH_DIAGNOSIS.value,
-        },
-    )
-    builder.add_edge(ChatMode.GENERAL_QA.value, END)
-    builder.add_edge(ChatMode.LITERATURE_DISCOVERY.value, END)
-    builder.add_edge(ChatMode.PAPER_READING.value, END)
-    builder.add_edge(ChatMode.RESEARCH_DIAGNOSIS.value, END)
     return builder.compile()

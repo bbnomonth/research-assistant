@@ -48,10 +48,16 @@ class ConversationSession(Base):
         ForeignKey("projects.id"),
         index=True,
     )
+    title: Mapped[str] = mapped_column(String(200), default="")
     summary: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=utc_now,
+        onupdate=utc_now,
     )
 
 
@@ -119,6 +125,7 @@ class Paper(Base):
     pdf_url: Mapped[str] = mapped_column(Text)
     recommendation_reason: Mapped[str] = mapped_column(Text, default="")
     purpose_labels_json: Mapped[str] = mapped_column(Text, default="[]")
+    favorited: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default=utc_now,

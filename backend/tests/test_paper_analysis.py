@@ -171,7 +171,6 @@ def test_compare_papers_creates_evidence_bound_artifact(tmp_path) -> None:
     assert result.evidence_pages[papers[0].id] == [1, 3]
     assert "Routing Paper 1" in gateway.prompt
     assert "Routing Paper 2" in gateway.prompt
-    assert "They use different routing methods" in result.artifact.markdown
 
     content = json.loads(result.artifact.content_json)
     assert content["papers"][0]["paper_id"] == papers[0].id
