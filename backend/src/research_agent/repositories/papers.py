@@ -50,10 +50,19 @@ class PaperRepository:
         return stored
 
     def list_for_project(self, project_id: str, limit: int = 20) -> List[Paper]:
+        """Return papers visible in the project paper library.
+
+        Search recommendations are cached so they can be favorited later, but
+        they should not enter the library until the user explicitly favorites
+        them. Uploaded PDFs are always library items.
+        """
         return list(
             self.db.scalars(
                 select(Paper)
-                .where(Paper.project_id == project_id)
+                .where(
+                    Paper.project_id == project_id,
+                    (Paper.favorited == True) | (Paper.arxiv_id.like("upload:%")),
+                )
                 .order_by(Paper.created_at.desc())
                 .limit(limit)
             )

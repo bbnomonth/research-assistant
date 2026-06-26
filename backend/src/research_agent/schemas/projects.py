@@ -110,6 +110,7 @@ class PaperSummary(BaseModel):
     pdf_url: str
     recommendation_reason: str
     purpose_labels_json: str
+    favorited: bool
     created_at: datetime
     updated_at: datetime
 
@@ -128,6 +129,7 @@ class PaperSummary(BaseModel):
             pdf_url=paper.pdf_url,
             recommendation_reason=paper.recommendation_reason,
             purpose_labels_json=paper.purpose_labels_json,
+            favorited=paper.favorited,
             created_at=paper.created_at,
             updated_at=paper.updated_at,
         )

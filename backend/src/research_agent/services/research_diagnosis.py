@@ -1,144 +1,63 @@
-from dataclasses import dataclass
-import json
 import time
+from dataclasses import dataclass
 from typing import List
 
-from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from research_agent.db.models import Artifact
-from research_agent.repositories.artifacts import ArtifactRepository
-from research_agent.repositories.paper_chunks import EvidenceResult, PaperChunkRepository
-from research_agent.repositories.papers import PaperRepository
 from research_agent.services.model_call_logging import record_model_call
-from research_agent.services.model_gateway import ModelGateway
-from research_agent.services.structured_output import validate_structured
+from research_agent.services.model_gateway import ModelGateway, collect_chat
 
 
-class ResearchDiagnosis(BaseModel):
-    topic_summary: str = ""
-    evidence_supported_judgements: List[str] = Field(default_factory=list)
-    reasonable_inferences: List[str] = Field(default_factory=list)
-    gaps: List[str] = Field(default_factory=list)
-    risks: List[str] = Field(default_factory=list)
-    next_questions: List[str] = Field(default_factory=list)
+# ── 框架搭建导师：单 LLM 系统提示词 ──────────────────────────────────────────────
+
+_FRAMEWORK_BUILDING_SYSTEM = """你是一名水平极其高超且严谨的研究生论文框架搭建导师。你将以苏格拉底提问法帮助我搭建论文框架。我已有一个选题或导师提供的大致研究方向，但还需要进一步明确研究问题、核心概念、理论基础、研究思路与章节结构。
+请不要一开始直接给出完整框架，而是每次只提出1个最关键的问题，引导我逐步澄清包括但不限于：研究对象、研究问题、核心变量/概念、研究价值、文献基础、方法选择与可能创新点。
+你的问题应简洁、具体、有推进性。根据我的回答继续追问、归纳或校正方向。只有当你对论文框架已有95%以上信心时，才输出最终方案。
+最终方案应包括：题目优化建议、研究问题、核心论证逻辑、章节结构、每章写作重点、可能的研究方法与创新点。"""
 
 
 @dataclass(frozen=True)
-class DiagnosisResult:
-    artifact: Artifact
-    evidence: dict[str, List[EvidenceResult]]
+class FrameworkChatResult:
+    """Outcome of one turn of free-form framework building chat."""
 
-    @property
-    def evidence_pages(self) -> dict[str, List[int]]:
-        pages_by_paper = {}
-        for paper_id, items in self.evidence.items():
-            pages = []
-            for item in items:
-                if item.page_number not in pages:
-                    pages.append(item.page_number)
-            pages_by_paper[paper_id] = pages
-        return pages_by_paper
+    assistant_message: str
 
 
-class ResearchDiagnosisService:
+class FrameworkBuilder:
+    """Socratic framework-building chat engine.
+
+    One LLM call per turn with a single system prompt.
+    """
+
     def __init__(self, db: Session, model_gateway: ModelGateway) -> None:
         self.db = db
-        self.model_gateway = model_gateway
+        self.gateway = model_gateway
 
-    async     def diagnose(self, project_id: str, user_input: str) -> DiagnosisResult:
-        papers = PaperRepository(self.db).list_for_project(project_id, limit=5)
-        chunk_repo = PaperChunkRepository(self.db)
-        evidence = {
-            paper.id: chunk_repo.list_for_paper(paper.id, limit=4)
-            for paper in papers
-        }
-        diagnosis = await self._build_diagnosis(user_input, papers, evidence)
-        markdown = self._to_markdown(diagnosis, papers, evidence)
-        content = diagnosis.model_dump()
-        content["evidence"] = {
-            paper_id: [
-                {
-                    "chunk_id": item.chunk_id,
-                    "page_number": item.page_number,
-                    "section": item.section,
-                    "is_ocr": item.is_ocr,
-                }
-                for item in items
-            ]
-            for paper_id, items in evidence.items()
-        }
-        artifact = ArtifactRepository(self.db).create_artifact(
-            project_id=project_id,
-            artifact_type="research_diagnosis",
-            title="Research diagnosis",
-            content=content,
-            markdown=markdown,
-        )
-        return DiagnosisResult(artifact=artifact, evidence=evidence)
-
-    async def _build_diagnosis(
+    async def chat(
         self,
+        history: List[dict],
         user_input: str,
-        papers,
-        evidence: dict[str, List[EvidenceResult]],
-    ) -> ResearchDiagnosis:
-        payload = [
-            {
-                "paper_id": paper.id,
-                "title": paper.title,
-                "evidence": [
-                    {
-                        "chunk_id": item.chunk_id,
-                        "page": item.page_number,
-                        "text": item.text[:900],
-                        "is_ocr": item.is_ocr,
-                    }
-                    for item in evidence[paper.id]
-                ],
-            }
-            for paper in papers
+    ) -> FrameworkChatResult:
+        """One turn of free-form framework-building dialogue.
+
+        `history` should be the conversation so far in OpenAI message format,
+        excluding the current user message. The current `user_input` is
+        appended automatically.
+        """
+        messages = [
+            {"role": "system", "content": _FRAMEWORK_BUILDING_SYSTEM},
+            *history,
+            {"role": "user", "content": user_input},
         ]
-        prompt = (
-            "你是一位资深的研究方法论导师。请基于用户输入和项目中的论文证据，对研究者的课题进行苏格拉底式诊断分析。用中文回答。\n"
-            "分析时请采用苏格拉底提问法：通过连续追问帮助研究者发现研究中的空白、逻辑漏洞和未检验的假设。\n"
-            "只能使用提供的 Evidence 内容；如证据不足，明确说明局限性。\n"
-            "返回 JSON，字段如下：\n"
-            "topic_summary：研究课题概述（1-2句话）\n"
-            "evidence_supported_judgements：有证据支撑的判断（列出3-5条）\n"
-            "reasonable_inferences：合理推断（列出2-3条，需标注为推断）\n"
-            "gaps：研究空白与不足（列出3-5条苏格拉底式追问）\n"
-            "risks：研究风险（列出2-3条）\n"
-            "next_questions：后续值得探索的问题（列出2-3条）\n"
-            f"\n用户材料：{user_input}\n"
-            f"\n项目论文证据：{json.dumps(payload, ensure_ascii=False)}"
-        )
-        fallback = ResearchDiagnosis(
-            topic_summary=user_input,
-            gaps=["Model output could not be parsed; manual review is required."],
-        )
+
         started = time.perf_counter()
         try:
-            result = await validate_structured(
-                gateway=self.model_gateway,
-                prompt=prompt,
-                validator=ResearchDiagnosis.model_validate,
-                fallback=fallback,
-            )
-            record_model_call(
-                self.db,
-                "research_diagnosis",
-                self.model_gateway.model_name,
-                started,
-                result.retries,
-                True,
-            )
-            return result.value
+            response = await collect_chat(self.gateway, messages)
         except Exception as exc:
             record_model_call(
                 self.db,
-                "research_diagnosis",
-                self.model_gateway.model_name,
+                "framework_building_chat",
+                self.gateway.model_name,
                 started,
                 0,
                 False,
@@ -146,34 +65,12 @@ class ResearchDiagnosisService:
             )
             raise
 
-    @staticmethod
-    def _to_markdown(diagnosis: ResearchDiagnosis, papers, evidence) -> str:
-        def bullets(items: List[str]) -> str:
-            return "\n".join(f"- {item}" for item in items) or "- None stated"
-
-        evidence_lines = []
-        for paper in papers:
-            evidence_lines.append(f"### {paper.title}")
-            paper_evidence = evidence.get(paper.id, [])
-            if not paper_evidence:
-                evidence_lines.append("- No stored evidence chunks were available.")
-                continue
-            evidence_lines.extend(
-                f"- Page {item.page_number}: {item.text[:140]}"
-                for item in paper_evidence
-            )
-        if not evidence_lines:
-            evidence_lines.append("- No project papers were available.")
-
-        return (
-            "# Research Diagnosis\n\n"
-            f"## Topic Summary\n\n{diagnosis.topic_summary}\n\n"
-            "## Evidence-Supported Judgements\n\n"
-            f"{bullets(diagnosis.evidence_supported_judgements)}\n\n"
-            "## Reasonable Inferences\n\n"
-            f"{bullets(diagnosis.reasonable_inferences)}\n\n"
-            f"## Gaps\n\n{bullets(diagnosis.gaps)}\n\n"
-            f"## Risks\n\n{bullets(diagnosis.risks)}\n\n"
-            f"## Next Questions\n\n{bullets(diagnosis.next_questions)}\n\n"
-            f"## Evidence\n\n{chr(10).join(evidence_lines)}\n"
+        record_model_call(
+            self.db,
+            "framework_building_chat",
+            self.gateway.model_name,
+            started,
+            0,
+            True,
         )
+        return FrameworkChatResult(assistant_message=response.strip())

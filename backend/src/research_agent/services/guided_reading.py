@@ -10,8 +10,7 @@ from research_agent.db.models import Artifact, Paper
 from research_agent.repositories.artifacts import ArtifactRepository
 from research_agent.repositories.paper_chunks import EvidenceResult, PaperChunkRepository
 from research_agent.services.model_call_logging import record_model_call
-from research_agent.services.model_gateway import ModelGateway
-from research_agent.services.structured_output import validate_structured
+from research_agent.services.model_gateway import ModelGateway, collect_chat
 
 
 class GuidedReadingTurn(BaseModel):
@@ -39,6 +38,60 @@ class GuidedReadingResult:
 
 
 class GuidedReadingService:
+    STAGE_ORDER = ("question", "method", "contribution", "limitations", "complete")
+    STAGE_LABELS = {
+        "intro": "阅读定位",
+        "question": "研究问题",
+        "method": "方法与证据",
+        "contribution": "贡献与创新",
+        "limitations": "局限与边界",
+        "complete": "总结",
+    }
+    STAGE_KEYWORDS = {
+        "question": (
+            "abstract",
+            "introduction",
+            "problem",
+            "objective",
+            "研究问题",
+            "目标",
+            "摘要",
+            "引言",
+        ),
+        "method": (
+            "method",
+            "methodology",
+            "experiment",
+            "dataset",
+            "model",
+            "方法",
+            "实验",
+            "数据",
+            "模型",
+        ),
+        "contribution": (
+            "contribution",
+            "result",
+            "finding",
+            "performance",
+            "贡献",
+            "结果",
+            "发现",
+            "创新",
+        ),
+        "limitations": (
+            "limitation",
+            "discussion",
+            "future",
+            "conclusion",
+            "局限",
+            "讨论",
+            "不足",
+            "未来",
+            "结论",
+        ),
+    }
+
     def __init__(self, db: Session, model_gateway: ModelGateway) -> None:
         self.db = db
         self.model_gateway = model_gateway
@@ -55,9 +108,13 @@ class GuidedReadingService:
             raise LookupError("paper not found")
         if paper.project_id != project_id:
             raise ValueError("paper does not belong to project")
+        if not paper.favorited and not paper.arxiv_id.startswith("upload:"):
+            raise ValueError("paper must be in the paper library before guided reading")
 
-        evidence = PaperChunkRepository(self.db).list_for_paper(
-            paper_id,
+        stage = self._infer_stage(user_input, history)
+        evidence = self._select_evidence(
+            PaperChunkRepository(self.db).list_for_paper(paper_id, limit=80),
+            stage=stage,
             limit=8,
         )
         if not evidence:
@@ -68,6 +125,7 @@ class GuidedReadingService:
             user_input=user_input,
             history=history[-12:],
             evidence=evidence,
+            stage=stage,
         )
         artifact = None
         if turn.completed:
@@ -84,6 +142,7 @@ class GuidedReadingService:
         user_input: str,
         history: List[Dict[str, str]],
         evidence: List[EvidenceResult],
+        stage: str,
     ) -> GuidedReadingTurn:
         payload = [
             {
@@ -96,45 +155,49 @@ class GuidedReadingService:
             for item in evidence
         ]
         prompt = (
-            "你是一位循循善诱的苏格拉底式导师，正在引导研究者精读一篇学术论文。用中文回答。\n"
-            "你的职责：通过连续追问，帮助研究者深入理解论文，而非直接给出答案。\n"
-            "每次回复格式：先给予积极肯定，再基于论文原文提出1-2个追问式问题，引导研究者思考。\n"
-            "如果研究者回答充分，则过渡到下一个维度。\n"
-            "引导维度顺序：研究问题（核心问题是什么）→ 研究方法（如何验证假设）→ 贡献与创新（突破了什么）→ 研究局限（有何不足）→ 总结。\n"
-            "只能使用提供的论文原文证据，不要编造信息。返回 JSON：\n"
-            "feedback：本轮苏格拉底反馈（1-3句话，肯定+追问）\n"
-            "evidence_notes：引用原文的证据笔记（列出页码和关键摘录）\n"
-            "next_question：下一个苏格拉底追问（1个问题）\n"
-            "completed：是否完成全部维度（当5个维度都引导完毕后为 true）\n"
-            "learning_summary：本次精读的学习总结（1-3句话）\n"
-            "socratic_stage：当前维度（intro/question/method/contribution/limitations/complete）\n"
+            "你是一位论文精读导师，请采用苏格拉底提问法引导研究者阅读这篇论文。"
+            "请结合当前阅读阶段、对话历史和论文原文，先用简短反馈指出用户理解中值得保留或需要澄清的点，"
+            "再提出一个具体、可回答的追问；追问要指向论文中的具体页码或段落线索。"
+            "每次只推进一个阅读动作，避免直接替用户总结全文。"
+            "如果用户只是说“带我精读/开始精读”，请先给出本阶段阅读定位，再提出第一个可执行问题。"
+            "请只输出一段自然中文，不要输出 JSON、字段名、寒暄或模板化说明。\n"
             f"\n论文标题：{paper.title}\n"
+            f"\n建议推进阶段：{stage}（{self.STAGE_LABELS.get(stage, stage)}）\n"
             f"\n对话历史：{json.dumps(history, ensure_ascii=False)}\n"
-            f"\n研究者本次回答：{user_input}\n"
-            f"\n论文原文证据：{json.dumps(payload, ensure_ascii=False)}"
+            f"\n研究者本次输入：{user_input}\n"
+            f"\n论文原文：{json.dumps(payload, ensure_ascii=False)}"
         )
-        fallback = GuidedReadingTurn(
-            feedback="结合原文再思考一下：这项研究试图回答的核心问题是什么？",
-            next_question="请结合论文第X页的内容，说明作者如何定义和验证其核心假设。",
-            socratic_stage="question",
-        )
+        fallback = self._fallback_turn(stage, evidence, user_input)
         started = time.perf_counter()
         try:
-            result = await validate_structured(
-                gateway=self.model_gateway,
-                prompt=prompt,
-                validator=GuidedReadingTurn.model_validate,
-                fallback=fallback,
+            response = await collect_chat(
+                self.model_gateway,
+                [{"role": "user", "content": prompt}],
             )
             record_model_call(
                 self.db,
                 "guided_reading",
                 self.model_gateway.model_name,
                 started,
-                result.retries,
+                0,
                 True,
             )
-            return result.value
+            text = response.strip()
+            if not text:
+                return fallback
+            evidence_notes = [
+                f"第 {item.page_number} 页：{item.text[:120]}"
+                for item in evidence[:3]
+            ]
+            completed = stage == "complete"
+            return GuidedReadingTurn(
+                feedback=text,
+                evidence_notes=evidence_notes,
+                next_question="",
+                completed=completed,
+                learning_summary=text if completed else "",
+                socratic_stage=stage,
+            )
         except Exception as exc:
             record_model_call(
                 self.db,
@@ -146,6 +209,101 @@ class GuidedReadingService:
                 exc,
             )
             raise
+
+    def _infer_stage(
+        self,
+        user_input: str,
+        history: List[Dict[str, str]],
+    ) -> str:
+        normalized = user_input.strip().casefold()
+        if not history or any(word in normalized for word in ("开始", "精读", "带我")):
+            return "question"
+        stage_mentions = " ".join(
+            item.get("content", "") for item in history[-8:]
+        ).casefold()
+        label_to_stage = {
+            "研究问题": "method",
+            "方法": "contribution",
+            "贡献": "limitations",
+            "创新": "limitations",
+            "局限": "complete",
+            "边界": "complete",
+        }
+        for label, next_stage in label_to_stage.items():
+            if label in stage_mentions:
+                return next_stage
+        for stage in self.STAGE_ORDER:
+            if stage != "complete" and stage in stage_mentions:
+                current_index = self.STAGE_ORDER.index(stage)
+                return self.STAGE_ORDER[
+                    min(current_index + 1, len(self.STAGE_ORDER) - 1)
+                ]
+        user_turns = sum(1 for item in history if item.get("role") == "user")
+        return self.STAGE_ORDER[min(user_turns, len(self.STAGE_ORDER) - 1)]
+
+    def _select_evidence(
+        self,
+        candidates: List[EvidenceResult],
+        stage: str,
+        limit: int,
+    ) -> List[EvidenceResult]:
+        if not candidates:
+            return []
+        keywords = self.STAGE_KEYWORDS.get(stage, ())
+        first_page = min(item.page_number for item in candidates)
+        selected = [item for item in candidates if item.page_number == first_page]
+        if keywords:
+            selected.extend(
+                item for item in candidates if self._matches_keywords(item, keywords)
+            )
+        selected.extend(candidates)
+        deduped = []
+        seen = set()
+        for item in selected:
+            if item.chunk_id in seen:
+                continue
+            deduped.append(item)
+            seen.add(item.chunk_id)
+            if len(deduped) == limit:
+                break
+        return deduped
+
+    @staticmethod
+    def _matches_keywords(item: EvidenceResult, keywords) -> bool:
+        haystack = f"{item.section}\n{item.text}".lower()
+        return any(keyword.lower() in haystack for keyword in keywords)
+
+    def _fallback_turn(
+        self,
+        stage: str,
+        evidence: List[EvidenceResult],
+        user_input: str,
+    ) -> GuidedReadingTurn:
+        item = evidence[0]
+        stage_label = self.STAGE_LABELS.get(stage, "研究问题")
+        notes = [
+            f"第 {e.page_number} 页：{e.text[:120]}"
+            for e in evidence[:3]
+        ]
+        opening = (
+            "先从论文的研究问题入手。"
+            if not user_input.strip() or "精读" in user_input
+            else "你的回答可以作为初步理解，但还需要回到原文定位证据。"
+        )
+        return GuidedReadingTurn(
+            feedback=(
+                f"{opening} 当前阶段是“{stage_label}”，建议先阅读第 "
+                f"{item.page_number} 页附近的表述，标出作者提出问题、假设或论证对象的句子。"
+            ),
+            evidence_notes=notes,
+            next_question=(
+                f"请基于第 {item.page_number} 页的原文，用一句话说明作者在"
+                f"“{stage_label}”上最想解决什么问题。"
+            ),
+            completed=stage == "complete",
+            learning_summary="" if stage != "complete" else "已完成主要精读阶段，请复核证据笔记。",
+            socratic_stage=stage,
+        )
 
     def _create_artifact(
         self,

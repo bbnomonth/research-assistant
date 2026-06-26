@@ -33,3 +33,9 @@ class WipeDataResponse(BaseModel):
     removed_sessions: int
     removed_projects: int
     message: Optional[str] = None
+
+
+class FrameworkChapterOutline(BaseModel):
+    chapter: str = ""
+    title: str = ""
+    key_points: str = ""

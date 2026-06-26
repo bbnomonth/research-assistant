@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Request
 
+from research_agent.db.models import Message
 from research_agent.repositories.conversations import ConversationRepository
 from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.projects import (

@@ -5,12 +5,11 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "research-training-agent-backend"
 version = "0.1.0"
-requires-python = ">=3.9,<3.10"
+requires-python = ">=3.9,<3.13"
 dependencies = [
   "fastapi==0.128.8",
   "httpx==0.28.1",
   "langchain-community>=0.3.27,<0.4",
-  "langgraph>=0.2,<0.3",
   "arxiv>=2.1,<3",
   "openai==1.109.1",
   "pydantic==2.12.2",
@@ -27,6 +26,6 @@ test = ["pytest==8.4.2"]
 where = ["src"]
 
 [tool.pytest.ini_options]
-addopts = "-p no:cacheprovider --basetemp=backend/.pytest-tmp"
+addopts = "-p no:cacheprovider"
 pythonpath = ["src"]
 testpaths = ["tests"]

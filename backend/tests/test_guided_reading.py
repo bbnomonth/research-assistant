@@ -1,5 +1,4 @@
 import asyncio
-import json
 
 import pytest
 
@@ -20,18 +19,10 @@ class ReadingGateway:
 
     async def stream_chat(self, messages):
         self.prompt = messages[-1]["content"]
-        yield json.dumps(
-            {
-                "feedback": "你已经识别出研究对象，但还需要说明方法。",
-                "evidence_notes": ["第 2 页描述了车辆路径方法。"],
-                "next_question": "" if self.completed else "作者使用了什么方法？",
-                "completed": self.completed,
-                "learning_summary": (
-                    "用户理解了研究对象和方法。" if self.completed else ""
-                ),
-            },
-            ensure_ascii=False,
-        )
+        if self.completed:
+            yield "你已经完成了主要精读路径。请回到第 2 页核对方法证据，并用一句话说明它如何支撑论文贡献。"
+            return
+        yield "你已经识别出研究对象，但还需要回到第 2 页确认方法证据：作者具体使用了什么方法来处理车辆路径问题？"
 
 
 def _create_paper_with_evidence(db):
@@ -55,6 +46,7 @@ def _create_paper_with_evidence(db):
             )
         ],
     )[0]
+    paper.favorited = True
     chunks = PaperChunkRepository(db).replace_chunks(
         paper.id,
         [
@@ -87,10 +79,14 @@ def test_guided_reading_returns_feedback_without_artifact(tmp_path) -> None:
         )
 
     assert result.artifact is None
-    assert result.turn.next_question == "作者使用了什么方法？"
+    assert result.turn.next_question == ""
+    assert "作者具体使用了什么方法" in result.turn.feedback
     assert result.evidence_pages == [2]
     assert chunks[0].id in gateway.prompt
     assert "learning-guided vehicle routing" in gateway.prompt
+    assert "JSON 字段" not in gateway.prompt
+    assert "不要输出 JSON" in gateway.prompt
+    assert "只输出一段自然中文" in gateway.prompt
 
 
 def test_guided_reading_completion_creates_artifact(tmp_path) -> None:
@@ -105,7 +101,7 @@ def test_guided_reading_completion_creates_artifact(tmp_path) -> None:
                 paper_id=paper.id,
                 user_input="作者使用学习引导的路径优化方法。",
                 history=[
-                    {"role": "assistant", "content": "论文研究什么问题？"},
+                    {"role": "assistant", "content": "现在检查局限与边界。"},
                     {"role": "user", "content": "车辆路径问题。"},
                 ],
             )
@@ -114,7 +110,7 @@ def test_guided_reading_completion_creates_artifact(tmp_path) -> None:
 
     assert result.artifact is not None
     assert result.artifact.artifact_type == "guided_reading_note"
-    assert "用户理解了研究对象和方法" in result.artifact.markdown
+    assert "你已经完成了主要精读路径" in result.artifact.markdown
 
 
 def test_guided_reading_rejects_paper_from_another_project(tmp_path) -> None:

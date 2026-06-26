@@ -26,6 +26,7 @@ import {
   ReadOutlined,
   SearchOutlined,
   ExperimentOutlined,
+  BulbOutlined,
   EditOutlined,
   DeleteOutlined,
   CheckOutlined,
@@ -122,6 +123,7 @@ export function ChatPage() {
   const [stages, setStages] = useState<StreamingStages>({});
   const [lastSend, setLastSend] = useState<PendingSend | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [composingNewSession, setComposingNewSession] = useState(false);
 
   const streamRef = useRef<ChatStreamHandle | null>(null);
   const scrollRef = useAutoScroll<HTMLDivElement>([
@@ -140,24 +142,38 @@ export function ChatPage() {
     if (!activeProjectId) {
       setActiveSessionId(null);
       setMessages([]);
+      setComposingNewSession(false);
       return;
     }
     setActiveSessionId(null);
+    setComposingNewSession(false);
     void loadSessions(activeProjectId);
     void loadPapers(activeProjectId);
   }, [activeProjectId]);
 
   useEffect(() => {
+    if (composingNewSession) {
+      setActiveSessionId(null);
+      setMessages([]);
+      return;
+    }
     if (!activeProjectId || sessions.length === 0) {
       setActiveSessionId(null);
       setMessages([]);
       return;
     }
+    if (activeSessionId && sessions.some((session) => session.id === activeSessionId)) {
+      return;
+    }
     setActiveSessionId(sessions[0].id);
-  }, [activeProjectId, sessions]);
+  }, [activeProjectId, sessions, activeSessionId, composingNewSession]);
 
   useEffect(() => {
     if (!activeSessionId) {
+      setMessages([]);
+      return;
+    }
+    if (isLocalSessionId(activeSessionId)) {
       setMessages([]);
       return;
     }
@@ -183,6 +199,9 @@ export function ChatPage() {
         message.role === 'user' || message.mode === modeFilter,
     );
   }, [messages, turnsBySession, activeSessionId, modeFilter]);
+
+  const showWelcomeCard =
+    !streaming && visibleMessages.length === 0 && filteredTurns.length === 0;
 
   const ensureProjectAndSession = async () => {
     let availableProjects = projects;
@@ -275,30 +294,21 @@ export function ChatPage() {
                 const state = useAppStore.getState();
                 const currentSessions =
                   state.sessionsByProject[metaProject] ?? [];
+                const withoutLocal = currentSessions.filter(
+                  (s) => s.id !== params.localSessionId && s.id !== metaSession,
+                );
                 const existing = currentSessions.find(
                   (s) => s.id === metaSession,
                 );
-                if (!existing || existing.title !== metaTitle) {
-                  if (existing) {
-                    const updated = currentSessions.map((s) =>
-                      s.id === metaSession ? { ...s, title: metaTitle } : s,
-                    );
-                    setSessions(metaProject, updated);
-                  } else {
-                    const placeholder: Session = {
-                      id: metaSession,
-                      project_id: metaProject,
-                      title: metaTitle,
-                      summary: '',
-                      created_at: new Date().toISOString(),
-                      updated_at: new Date().toISOString(),
-                    };
-                    setSessions(metaProject, [
-                      placeholder,
-                      ...currentSessions,
-                    ]);
-                  }
-                }
+                const resolvedSession: Session = {
+                  id: metaSession,
+                  project_id: metaProject,
+                  title: metaTitle,
+                  summary: existing?.summary ?? '',
+                  created_at: existing?.created_at ?? new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                };
+                setSessions(metaProject, [resolvedSession, ...withoutLocal]);
               }
               setLastSend({
                 ...params,
@@ -407,6 +417,25 @@ export function ChatPage() {
       const sessionId = ctx.sessionId;
 
       const turnSessionId = resolveRenderSessionId(sessionId, turnId);
+      setComposingNewSession(false);
+      setActiveSessionId(turnSessionId);
+      if (projectId && !sessionId) {
+        const now = new Date().toISOString();
+        const current = useAppStore.getState().sessionsByProject[projectId] ?? [];
+        if (!current.some((session) => session.id === turnSessionId)) {
+          setSessions(projectId, [
+            {
+              id: turnSessionId,
+              project_id: projectId,
+              title: deriveLocalSessionTitle(trimmed),
+              summary: '',
+              created_at: now,
+              updated_at: now,
+            },
+            ...current,
+          ]);
+        }
+      }
       appendTurn(turnSessionId, {
         id: turnId,
         role: 'user',
@@ -464,8 +493,13 @@ export function ChatPage() {
   };
 
   const handleNewSession = () => {
+    setComposingNewSession(true);
     setActiveSessionId(null);
     setMessages([]);
+    setModeFilter('all');
+    setStages({});
+    setRenamingSessionId(null);
+    setSelectedSessionIds(new Set());
   };
 
   const handleRenameSession = async (sessionId: string, title: string) => {
@@ -489,6 +523,7 @@ export function ChatPage() {
     if (activeSessionId === sessionId) {
       setActiveSessionId(null);
       setMessages([]);
+      setComposingNewSession(true);
     }
     setSelectedSessionIds((prev) => {
       const next = new Set(prev);
@@ -604,6 +639,7 @@ export function ChatPage() {
           activeId={activeSessionId}
           selectedIds={selectedSessionIds}
           onSelect={(id) => {
+            setComposingNewSession(false);
             setRenamingSessionId(null);
             setActiveSessionId(id);
           }}
@@ -643,9 +679,10 @@ export function ChatPage() {
               onChange={(v) => setModeFilter(v as ChatModeFilter)}
               options={[
                 { label: '全部', value: 'all' },
+                { label: '选题', value: 'topic_guidance' },
+                { label: '框架', value: 'framework_building' },
                 { label: '检索', value: 'literature_discovery' },
                 { label: '精读', value: 'paper_reading' },
-                { label: '诊断', value: 'research_diagnosis' },
               ]}
             />
           </Space>
@@ -663,7 +700,7 @@ export function ChatPage() {
             <div style={{ textAlign: 'center', padding: 24 }}>
               <Spin />
             </div>
-          ) : visibleMessages.length === 0 && filteredTurns.length === 0 ? (
+          ) : showWelcomeCard ? (
             <WelcomeCard onTemplate={handleQuickTemplate} />
           ) : (
             <>
@@ -718,8 +755,6 @@ function mapStageName(name: string): keyof StreamingStages {
       return 'persistence';
     case 'evidence_collection':
       return 'evidenceCollection';
-    case 'diagnosis':
-      return 'diagnosis';
     case 'reading_guidance':
       return 'readingGuidance';
     default:
@@ -1117,6 +1152,16 @@ function formatRelativeTime(date: Date): string {
   return date.toLocaleDateString('zh-CN');
 }
 
+function deriveLocalSessionTitle(content: string): string {
+  const normalized = content.replace(/\s+/g, ' ').trim();
+  if (!normalized) return '新会话';
+  return normalized.length > 18 ? `${normalized.slice(0, 17)}…` : normalized;
+}
+
+function isLocalSessionId(sessionId: string): boolean {
+  return sessionId.startsWith('local-') || sessionId.startsWith('assistant-');
+}
+
 // ─── Attachment View ──────────────────────────────────────────────────────────
 
 function AttachmentView({ attachment, projectId }: { attachment: Attachment; projectId?: string | null }) {
@@ -1128,8 +1173,9 @@ function AttachmentView({ attachment, projectId }: { attachment: Attachment; pro
     const typeLabel: Record<string, string> = {
       literature_card: '文献卡片',
       paper_comparison: '论文对比',
-      research_diagnosis: '研究诊断',
       guided_reading_note: '精读笔记',
+      topic_guidance_plan: '选题方案',
+      framework_card: '框架卡片',
     };
     const id = data.artifact_id as string;
     return (
@@ -1251,7 +1297,6 @@ function ChatComposer({
             ? '输入你的当前理解或直接说"开始精读"，系统会按研究问题、方法、贡献、局限逐步引导…'
             : '描述你当前的研究问题或想探索的主题…'
         }
-        disabled={streaming}
         maxLength={INPUT_MAX_LENGTH}
         showCount={false}
         onPressEnter={(e) => {
@@ -1301,6 +1346,13 @@ function ChatComposer({
 function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
   const cards: { title: string; icon: React.ReactNode; text: string; tag: string; color: string }[] = [
     {
+      title: '选题导师',
+      icon: <ExperimentOutlined style={{ fontSize: 22, color: '#2b82f6' }} />,
+      text: '我想做机器学习可解释性方向的研究，请帮我找到具体可写的论文题目。',
+      tag: '选题',
+      color: 'geekblue',
+    },
+    {
       title: '文献查找',
       icon: <SearchOutlined style={{ fontSize: 22, color: '#722ed1' }} />,
       text: '请帮我检索关于「车辆路径优化」的最新论文。',
@@ -1308,10 +1360,10 @@ function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
       color: 'purple',
     },
     {
-      title: '研究选题诊断',
-      icon: <ExperimentOutlined style={{ fontSize: 22, color: '#fa8c16' }} />,
-      text: '请诊断我的研究选题：基于强化学习的城市配送路径优化。',
-      tag: '诊断',
+      title: '论文框架搭建',
+      icon: <BulbOutlined style={{ fontSize: 22, color: '#fa8c16' }} />,
+      text: '我已经确定题目为“基于强化学习的城市配送路径优化”，请帮我搭建论文框架。',
+      tag: '框架',
       color: 'orange',
     },
     {

@@ -21,6 +21,7 @@ import {
   CompassOutlined,
   BulbOutlined,
   DeleteOutlined,
+  ExperimentOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
@@ -43,17 +44,23 @@ const ARTIFACT_TYPE_CONFIG: Record<
     color: '#722ed1',
     bgColor: '#f9f0ff',
   },
-  research_diagnosis: {
-    label: '研究诊断',
-    icon: <BulbOutlined />,
-    color: '#fa8c16',
-    bgColor: '#fff7e6',
-  },
   guided_reading_note: {
     label: '精读笔记',
     icon: <FileTextOutlined />,
     color: '#52c41a',
     bgColor: '#f6ffed',
+  },
+  topic_guidance_plan: {
+    label: '选题方案',
+    icon: <ExperimentOutlined />,
+    color: '#2b82f6',
+    bgColor: '#e6f4ff',
+  },
+  framework_card: {
+    label: '框架卡片',
+    icon: <BulbOutlined />,
+    color: '#fa8c16',
+    bgColor: '#fff7e6',
   },
 };
 
@@ -200,7 +207,7 @@ export function ArtifactsPage() {
         </div>
       ) : artifacts.length === 0 ? (
         <Empty
-          description="还没有任何研究成果。通过对话使用文献发现、快速分析或诊断功能即可自动生成成果。"
+          description="还没有任何研究成果。通过文献发现、快速分析、选题指导或框架搭建即可自动生成成果。"
           image={Empty.PRESENTED_IMAGE_SIMPLE}
         />
       ) : (

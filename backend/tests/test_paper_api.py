@@ -138,8 +138,8 @@ def test_quick_analysis_exports_markdown_from_uploaded_chunks(client) -> None:
     markdown = client.get(f"/api/artifacts/{payload['artifact_id']}/markdown")
 
     assert markdown.status_code == 200
-    assert markdown.text.startswith("# paper.pdf Literature Card")
-    assert "Page 1" in markdown.text
+    assert markdown.text.startswith("# paper.pdf 论文解读")
+    assert "第 1 页" in markdown.text
 
 
 def test_compare_papers_creates_comparison_artifact(client) -> None:
@@ -167,6 +167,7 @@ def test_compare_papers_creates_comparison_artifact(client) -> None:
             ],
         )
         for index, paper in enumerate(papers, start=1):
+            paper.favorited = True
             PaperChunkRepository(db).replace_chunks(
                 paper.id,
                 [
@@ -200,7 +201,7 @@ def test_compare_papers_creates_comparison_artifact(client) -> None:
     markdown = client.get(f"/api/artifacts/{payload['artifact_id']}/markdown")
 
     assert markdown.status_code == 200
-    assert markdown.text.startswith("# Paper Comparison")
+    assert markdown.text.startswith("# 论文对比报告")
 
 
 def test_import_arxiv_pdf_creates_completed_task(client) -> None:
@@ -262,7 +263,7 @@ def test_list_project_papers_returns_project_papers(client) -> None:
     database = client.app.state.database
     with database.session_factory() as db:
         project, _ = ConversationRepository(db).ensure_conversation(None, None)
-        PaperRepository(db).upsert_arxiv_papers(
+        papers = PaperRepository(db).upsert_arxiv_papers(
             project.id,
             [
                 RecommendedPaper(
@@ -281,6 +282,7 @@ def test_list_project_papers_returns_project_papers(client) -> None:
                 )
             ],
         )
+        papers[0].favorited = True
         db.commit()
 
     response = client.get(f"/api/projects/{project.id}/papers")
@@ -290,6 +292,38 @@ def test_list_project_papers_returns_project_papers(client) -> None:
     assert len(payload["papers"]) == 1
     assert payload["papers"][0]["title"] == "Listing Paper"
     assert payload["papers"][0]["arxiv_id"] == "2401.70001"
+    assert payload["papers"][0]["favorited"] is True
+
+
+def test_list_project_papers_excludes_unfavorited_search_results(client) -> None:
+    database = client.app.state.database
+    with database.session_factory() as db:
+        project, _ = ConversationRepository(db).ensure_conversation(None, None)
+        PaperRepository(db).upsert_arxiv_papers(
+            project.id,
+            [
+                RecommendedPaper(
+                    paper=ArxivPaper(
+                        arxiv_id="2401.70002",
+                        title="Unfavorited Search Paper",
+                        authors=["A"],
+                        abstract="Abstract",
+                        published="2024-01-01",
+                        categories=["cs.AI"],
+                        entry_url="https://arxiv.org/abs/2401.70002",
+                        pdf_url="https://arxiv.org/pdf/2401.70002",
+                    ),
+                    reason="",
+                    purpose_labels=["候选文献"],
+                )
+            ],
+        )
+        db.commit()
+
+    response = client.get(f"/api/projects/{project.id}/papers")
+
+    assert response.status_code == 200
+    assert response.json()["papers"] == []
 
 
 def test_list_project_papers_returns_404_for_missing_project(client) -> None:

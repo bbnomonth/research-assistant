@@ -69,3 +69,15 @@ def export_artifact_markdown(artifact_id: str, request: Request):
         except LookupError as exc:
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         return PlainTextResponse(markdown)
+
+
+@router.delete("/artifacts/{artifact_id}", status_code=204)
+def delete_artifact(artifact_id: str, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        try:
+            ArtifactRepository(db).delete_artifact(artifact_id)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        db.commit()
+    return None

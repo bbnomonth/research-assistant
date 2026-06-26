@@ -61,6 +61,13 @@ class ArtifactRepository:
         self.db.flush()
         return artifact
 
+    def delete_artifact(self, artifact_id: str) -> None:
+        artifact = self.get(artifact_id)
+        if artifact is None:
+            raise LookupError("artifact not found")
+        self.db.delete(artifact)
+        self.db.flush()
+
     def to_markdown(self, artifact_id: str) -> str:
         artifact = self.get(artifact_id)
         if artifact is None:

@@ -46,6 +46,19 @@ def test_project_api_returns_sessions_and_ordered_messages(client) -> None:
     ]
 
 
+def test_project_api_deletes_session_and_messages(client) -> None:
+    project_id, session_id = _seed_project(client)
+
+    deleted = client.delete(f"/api/sessions/{session_id}")
+    sessions = client.get(f"/api/projects/{project_id}/sessions")
+    messages = client.get(f"/api/sessions/{session_id}/messages")
+
+    assert deleted.status_code == 204
+    assert sessions.status_code == 200
+    assert sessions.json()["sessions"] == []
+    assert messages.status_code == 404
+
+
 def test_project_api_updates_structured_profile(client) -> None:
     project_id, _ = _seed_project(client)
 

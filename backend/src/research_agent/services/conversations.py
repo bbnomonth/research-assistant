@@ -17,7 +17,8 @@ from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
 )
-from research_agent.services.research_diagnosis import ResearchDiagnosisService
+from research_agent.services.topic_guidance import TopicGuidanceService
+from research_agent.services.research_diagnosis import FrameworkBuilder
 from research_agent.services.intent_classifier import (
     classify_by_keywords,
     classify_intent,
@@ -80,14 +81,35 @@ class ConversationService:
         self,
         content: str,
         mode_override: Optional[ChatMode],
+        history=None,
     ) -> ChatMode:
         """Classify the user's intent using LLM when available, else keyword fallback."""
         if mode_override is not None:
             return mode_override
+        inherited = self._inherited_mode(history or [])
+        if inherited is not None:
+            return inherited
         if self.model_gateway is not None:
             classification = await classify_intent(self.model_gateway, content)
             return classification.mode
         return classify_by_keywords(content)
+
+    @staticmethod
+    def _inherited_mode(history) -> Optional[ChatMode]:
+        sticky_modes = {
+            ChatMode.FRAMEWORK_BUILDING,
+            ChatMode.TOPIC_GUIDANCE,
+            ChatMode.PAPER_READING,
+        }
+        for message in reversed(history):
+            if message.role != "assistant" or not message.mode:
+                continue
+            try:
+                mode = ChatMode(message.mode)
+            except ValueError:
+                return None
+            return mode if mode in sticky_modes else None
+        return None
 
     async def stream_reply(
         self,
@@ -121,7 +143,7 @@ class ConversationService:
         self.repository.touch_session(conversation.id)
         self.db.commit()
 
-        mode = await self._classify_mode(content, mode_override)
+        mode = await self._classify_mode(content, mode_override, history)
 
         yield StreamEvent(event="mode", data={"mode": mode.value})
         yield StreamEvent(
@@ -157,45 +179,13 @@ class ConversationService:
             )
             return
 
-        if mode is ChatMode.RESEARCH_DIAGNOSIS:
-            if self.model_gateway is None:
-                yield StreamEvent(
-                    event="error",
-                    data={
-                        "message": (
-                            "研究诊断需要调用大模型，请先在后台配置 API Key 后重启服务。"
-                        ),
-                        "code": "MODEL_NOT_CONFIGURED",
-                    },
-                )
-                return
-            try:
-                async for event in self._stream_research_diagnosis(
-                    project.id,
-                    conversation.id,
-                    content,
-                ):
-                    yield event
-            except Exception:
-                self.db.rollback()
-                yield StreamEvent(
-                    event="error",
-                    data={
-                        "message": (
-                            "研究诊断暂时不可用，请稍后重试；"
-                            "已保存的项目和文献不会受影响。"
-                        )
-                    },
-                )
-            return
-
         if mode is ChatMode.PAPER_READING:
             if paper_id is None:
                 yield StreamEvent(
                     event="error",
                     data={
                         "message": (
-                            "请先在「论文与证据」页面选择或上传一篇论文，"
+                            "请先在「论文库」页面选择或上传一篇论文，"
                             "再使用引导式精读功能。"
                         ),
                         "code": "PAPER_READING_REQUIRES_PAPER",
@@ -231,7 +221,7 @@ class ConversationService:
                         data={
                             "message": (
                                 "该论文尚未完成解析，暂时无法进行引导式精读。"
-                                "请在「论文与证据」页面确认该论文状态为「已完成」。"
+                                "请在「论文库」页面确认该论文状态为「已完成」。"
                             ),
                             "code": "PAPER_NOT_PARSED",
                         },
@@ -255,12 +245,142 @@ class ConversationService:
                 )
             return
 
+        if mode is ChatMode.TOPIC_GUIDANCE:
+            if self.model_gateway is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "选题导师需要调用大模型，请先在后台配置 API Key 后重启服务。"
+                        ),
+                        "code": "MODEL_NOT_CONFIGURED",
+                    },
+                )
+                return
+            try:
+                async for event in self._stream_topic_guidance(
+                    project.id,
+                    conversation.id,
+                    content,
+                    history,
+                ):
+                    yield event
+            except Exception:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "选题导师暂时不可用，请稍后重试。"
+                        )
+                    },
+                )
+                return
+            return
+
+        if mode is ChatMode.FRAMEWORK_BUILDING:
+            if self.model_gateway is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "搭框架需要调用大模型，请先在后台配置 API Key 后重启服务。"
+                        ),
+                        "code": "MODEL_NOT_CONFIGURED",
+                    },
+                )
+                return
+            try:
+                async for event in self._stream_framework_building(
+                    project.id,
+                    conversation.id,
+                    content,
+                    history,
+                ):
+                    yield event
+            except Exception:
+                self.db.rollback()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "搭框架暂时不可用，请稍后重试。"
+                        )
+                    },
+                )
+                return
+            return
+
+        if mode is ChatMode.OTHER:
+            if self.model_gateway is None:
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": (
+                            "模型暂不可用，请检查后台配置后重启服务。"
+                        )
+                    },
+                )
+                return
+
+            started = time.perf_counter()
+            pieces = []
+            native_messages = [
+                {"role": "user", "content": content}
+            ]
+            try:
+                async for token in self.model_gateway.stream_chat(native_messages):
+                    pieces.append(token)
+                    yield StreamEvent(event="token", data={"content": token})
+
+                final_content = "".join(pieces)
+                self.repository.add_message(
+                    conversation.id,
+                    "assistant",
+                    final_content,
+                    mode=mode.value,
+                )
+                self.db.add(
+                    ModelCallLog(
+                        task_type=mode.value,
+                        model=self.model_gateway.model_name,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        retries=0,
+                        success=1,
+                    )
+                )
+                self.db.commit()
+                yield StreamEvent(
+                    event="done",
+                    data={"content": final_content},
+                )
+            except Exception as exc:
+                self.db.rollback()
+                self.db.add(
+                    ModelCallLog(
+                        task_type=mode.value,
+                        model=self.model_gateway.model_name,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        retries=1,
+                        success=0,
+                        error_type=type(exc).__name__,
+                    )
+                )
+                self.db.commit()
+                yield StreamEvent(
+                    event="error",
+                    data={
+                        "message": "模型服务暂时不可用，请检查本地配置或稍后重试。"
+                    },
+                )
+            return
+
         if self.model_gateway is None:
             yield StreamEvent(
                 event="error",
                 data={
                     "message": (
-                        "模型暂不可用，请检查后台配置后重启服务。"
+                        "该功能需要调用大模型，请先在后台配置 API Key 后重启服务。"
                     )
                 },
             )
@@ -353,7 +473,7 @@ class ConversationService:
         )
         yield StreamEvent(
             event="stage",
-            data={"name": "persistence", "label": "保存到研究项目"},
+            data={"name": "persistence", "label": "缓存检索结果"},
         )
         PaperRepository(self.db).upsert_arxiv_papers(
             project_id,
@@ -363,6 +483,7 @@ class ConversationService:
         summary = (
             f"已根据你的问题检索了论文数据库，"
             f"从 {len(result.candidates)} 篇候选中筛选出 {rec_count} 篇推荐文献。"
+            "收藏后才会进入论文库，并可用于导入、精读和对比。"
         )
         self.repository.add_message(
             session_id,
@@ -385,50 +506,6 @@ class ConversationService:
                     "evidence_pages": [],
                 },
             )
-        yield StreamEvent(event="token", data={"content": summary})
-        yield StreamEvent(event="done", data={"content": summary})
-
-    async def _stream_research_diagnosis(
-        self,
-        project_id: str,
-        session_id: str,
-        content: str,
-    ) -> AsyncIterator[StreamEvent]:
-        yield StreamEvent(
-            event="stage",
-            data={"name": "evidence_collection", "label": "收集项目文献证据"},
-        )
-        yield StreamEvent(
-            event="stage",
-            data={"name": "diagnosis", "label": "生成研究诊断"},
-        )
-        result = await ResearchDiagnosisService(
-            db=self.db,
-            model_gateway=self.model_gateway,
-        ).diagnose(project_id, content)
-        yield StreamEvent(
-            event="stage",
-            data={"name": "persistence", "label": "保存诊断成果"},
-        )
-        summary = (
-            "已根据当前项目材料生成研究诊断，并保存为可编辑成果。"
-        )
-        self.repository.add_message(
-            session_id,
-            "assistant",
-            summary,
-            mode=ChatMode.RESEARCH_DIAGNOSIS.value,
-        )
-        self.db.commit()
-        yield StreamEvent(
-            event="artifact",
-            data={
-                "artifact_id": result.artifact.id,
-                "artifact_type": result.artifact.artifact_type,
-                "title": result.artifact.title,
-                "evidence_pages": result.evidence_pages,
-            },
-        )
         yield StreamEvent(event="token", data={"content": summary})
         yield StreamEvent(event="done", data={"content": summary})
 
@@ -486,3 +563,107 @@ class ConversationService:
             )
         yield StreamEvent(event="token", data={"content": response})
         yield StreamEvent(event="done", data={"content": response})
+
+    async def _stream_topic_guidance(
+        self,
+        project_id: str,
+        session_id: str,
+        content: str,
+        history,
+    ) -> AsyncIterator[StreamEvent]:
+        history_dicts = [
+            {"role": item.role, "content": item.content}
+            for item in history
+        ]
+
+        svc = TopicGuidanceService(db=self.db, model_gateway=self.model_gateway)
+
+        question_done = False
+        plan_artifact_id: str | None = None
+        plan_artifact_title: str | None = None
+
+        async for event in svc.stream_guidance(
+            project_id=project_id,
+            session_id=session_id,
+            user_input=content,
+            history=history_dicts,
+        ):
+            evt_type = event["type"]
+
+            if evt_type == "token":
+                yield StreamEvent(event="token", data={"content": event["content"]})
+
+            elif evt_type == "done_question":
+                question_done = True
+                self.repository.add_message(
+                    session_id,
+                    "assistant",
+                    event["content"],
+                    mode=ChatMode.TOPIC_GUIDANCE.value,
+                )
+                self.db.commit()
+                yield StreamEvent(event="done", data={"content": event["content"]})
+
+            elif evt_type == "artifact":
+                plan_artifact_id = event["artifact_id"]
+                plan_artifact_title = event["title"]
+                yield StreamEvent(
+                    event="artifact",
+                    data={
+                        "artifact_id": plan_artifact_id,
+                        "artifact_type": event["artifact_type"],
+                        "title": plan_artifact_title,
+                        "evidence_pages": [],
+                    },
+                )
+
+            elif evt_type == "plan_error":
+                yield StreamEvent(event="error", data={"message": event["content"]})
+
+            elif evt_type == "error":
+                yield StreamEvent(event="error", data={"message": event.get("message", "选题导师暂时不可用")})
+
+    async def _stream_framework_building(
+        self,
+        project_id: str,
+        session_id: str,
+        user_input: str,
+        history,
+    ) -> AsyncIterator[StreamEvent]:
+        history_dicts = [
+            {"role": item.role, "content": item.content}
+            for item in history
+        ]
+        # `history_dicts` may already include the current turn's user message
+        # (the route persists it before calling us). Drop the trailing
+        # duplicate so the LLM sees it exactly once.
+        while (
+            history_dicts
+            and history_dicts[-1].get("role") == "user"
+            and history_dicts[-1].get("content") == user_input
+        ):
+            history_dicts.pop()
+
+        svc = FrameworkBuilder(db=self.db, model_gateway=self.model_gateway)
+
+        try:
+            result = await svc.chat(
+                history=history_dicts,
+                user_input=user_input,
+            )
+        except Exception:
+            yield StreamEvent(
+                event="error",
+                data={"message": "搭框架服务暂时不可用，请稍后重试。"},
+            )
+            return
+
+        assistant_text = result.assistant_message
+        self.repository.add_message(
+            session_id,
+            "assistant",
+            assistant_text,
+            mode=ChatMode.FRAMEWORK_BUILDING.value,
+        )
+        self.db.commit()
+        yield StreamEvent(event="done", data={"content": assistant_text})

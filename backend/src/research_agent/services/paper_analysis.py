@@ -10,8 +10,7 @@ from research_agent.db.models import Artifact, Paper
 from research_agent.repositories.artifacts import ArtifactRepository
 from research_agent.repositories.paper_chunks import EvidenceResult, PaperChunkRepository
 from research_agent.services.model_call_logging import record_model_call
-from research_agent.services.model_gateway import ModelGateway
-from research_agent.services.structured_output import validate_structured
+from research_agent.services.model_gateway import ModelGateway, collect_chat
 
 
 class LiteratureCard(BaseModel):
@@ -82,6 +81,40 @@ class PaperAnalysisService:
         "评价",
         "评估",
     )
+    COMPARISON_DIMENSIONS = {
+        "研究问题": (
+            "abstract",
+            "introduction",
+            "problem",
+            "objective",
+            "研究问题",
+            "目标",
+            "摘要",
+            "引言",
+        ),
+        "方法与数据": METHOD_KEYWORDS,
+        "实验与结果": (
+            "result",
+            "finding",
+            "performance",
+            "baseline",
+            "结果",
+            "发现",
+            "性能",
+            "对比",
+        ),
+        "贡献与局限": (
+            "contribution",
+            "conclusion",
+            "limitation",
+            "future",
+            "贡献",
+            "结论",
+            "局限",
+            "不足",
+            "未来",
+        ),
+    }
 
     def __init__(self, db: Session, model_gateway: ModelGateway) -> None:
         self.db = db
@@ -94,9 +127,15 @@ class PaperAnalysisService:
 
         candidates = PaperChunkRepository(self.db).list_for_paper(paper_id, limit=40)
         evidence = self._select_evidence(candidates, limit=8)
-        card = await self._build_card(paper.title, evidence)
-        markdown = self._to_markdown(paper.title, card, evidence)
-        content = card.model_dump()
+        markdown = (
+            await self._build_quick_report(paper.title, evidence)
+            if evidence
+            else self._quick_report_fallback(paper.title, evidence)
+        )
+        content = {
+            "title": paper.title,
+            "report": markdown,
+        }
         content["evidence"] = [
             {
                 "chunk_id": item.chunk_id,
@@ -109,7 +148,7 @@ class PaperAnalysisService:
         artifact = ArtifactRepository(self.db).create_artifact(
             project_id=paper.project_id,
             artifact_type="literature_card",
-            title=f"{paper.title} literature card",
+            title=f"论文解读：{paper.title}",
             content=content,
             markdown=markdown,
         )
@@ -126,6 +165,8 @@ class PaperAnalysisService:
             paper = self.db.get(Paper, paper_id)
             if paper is None:
                 raise LookupError("paper not found")
+            if not paper.favorited and not paper.arxiv_id.startswith("upload:"):
+                raise ValueError("paper must be favorited before comparison")
             papers.append(paper)
 
         project_ids = {paper.project_id for paper in papers}
@@ -135,18 +176,18 @@ class PaperAnalysisService:
         chunk_repo = PaperChunkRepository(self.db)
         evidence_by_paper = {
             paper.id: self._select_evidence(
-                chunk_repo.list_for_paper(paper.id, limit=40),
-                limit=6,
+                chunk_repo.list_for_paper(paper.id, limit=80),
+                limit=10,
             )
             for paper in papers
         }
-        comparison = await self._build_comparison(papers, evidence_by_paper)
-        markdown = self._comparison_to_markdown(
-            papers,
-            comparison,
-            evidence_by_paper,
+        has_evidence = any(evidence_by_paper.values())
+        markdown = (
+            await self._build_comparison_report(papers, evidence_by_paper)
+            if has_evidence
+            else self._comparison_report_fallback(papers, evidence_by_paper)
         )
-        content = comparison.model_dump()
+        content = {"report": markdown}
         content["papers"] = [
             {"paper_id": p.id, "title": p.title}
             for p in papers
@@ -165,7 +206,7 @@ class PaperAnalysisService:
         artifact = ArtifactRepository(self.db).create_artifact(
             project_id=papers[0].project_id,
             artifact_type="paper_comparison",
-            title="Paper comparison",
+            title=f"论文对比：{' / '.join(p.title[:18] for p in papers)}",
             content=content,
             markdown=markdown,
         )
@@ -173,6 +214,107 @@ class PaperAnalysisService:
             artifact=artifact,
             evidence_by_paper=evidence_by_paper,
         )
+
+    async def _build_quick_report(
+        self,
+        title: str,
+        evidence: List[EvidenceResult],
+    ) -> str:
+        payload = [
+            {
+                "page": item.page_number,
+                "section": item.section,
+                "text": item.text[:1200],
+                "is_ocr": item.is_ocr,
+            }
+            for item in evidence
+        ]
+        prompt = (
+            "你是一位严谨的学术论文评审专家。请基于这篇论文，为研究者生成一份完整全面的论文解读。用中文回答。\n"
+            "请直接输出报告正文，不要写称呼、寒暄、道歉或关于提示词/原文缺失的说明。\n"
+            f"\n论文标题：{title}\n"
+            f"\n论文原文：{json.dumps(payload, ensure_ascii=False)}"
+        )
+        started = time.perf_counter()
+        try:
+            response = await collect_chat(
+                self.model_gateway,
+                [{"role": "user", "content": prompt}],
+            )
+            record_model_call(
+                self.db,
+                "paper_quick_analysis",
+                self.model_gateway.model_name,
+                started,
+                0,
+                True,
+            )
+            return response.strip() or self._quick_report_fallback(title, evidence)
+        except Exception as exc:
+            record_model_call(
+                self.db,
+                "paper_quick_analysis",
+                self.model_gateway.model_name,
+                started,
+                0,
+                False,
+                exc,
+            )
+            raise
+
+    async def _build_comparison_report(
+        self,
+        papers: List[Paper],
+        evidence_by_paper: dict[str, List[EvidenceResult]],
+    ) -> str:
+        payload = [
+            {
+                "title": paper.title,
+                "pages": [
+                    {
+                        "page": item.page_number,
+                        "section": item.section,
+                        "text": item.text[:1000],
+                        "is_ocr": item.is_ocr,
+                    }
+                    for item in evidence_by_paper[paper.id]
+                ],
+            }
+            for paper in papers
+        ]
+        prompt = (
+            "你是一位严谨的学术论文评审专家。请基于以下多篇论文的原文生成中文对比报告。\n"
+            "请直接输出报告正文，不要写称呼、寒暄、道歉或关于提示词/原文缺失的说明。\n"
+            f"\n论文原文：{json.dumps(payload, ensure_ascii=False)}"
+        )
+        started = time.perf_counter()
+        try:
+            response = await collect_chat(
+                self.model_gateway,
+                [{"role": "user", "content": prompt}],
+            )
+            record_model_call(
+                self.db,
+                "paper_comparison",
+                self.model_gateway.model_name,
+                started,
+                0,
+                True,
+            )
+            if response.strip():
+                return response.strip()
+            return self._comparison_report_fallback(papers, evidence_by_paper)
+        except Exception as exc:
+            record_model_call(
+                self.db,
+                "paper_comparison",
+                self.model_gateway.model_name,
+                started,
+                0,
+                False,
+                exc,
+            )
+            raise
 
     def _select_evidence(
         self,
@@ -183,14 +325,12 @@ class PaperAnalysisService:
             return []
 
         first_page = min(item.page_number for item in candidates)
-        selected = [
-            item for item in candidates
-            if item.page_number == first_page
-        ]
-        selected.extend(
-            item for item in candidates
-            if self._is_method_related(item)
-        )
+        selected = [item for item in candidates if item.page_number == first_page]
+        for keywords in self.COMPARISON_DIMENSIONS.values():
+            selected.extend(
+                item for item in candidates
+                if self._matches_keywords(item, keywords)
+            )
 
         deduped = []
         seen = set()
@@ -204,182 +344,54 @@ class PaperAnalysisService:
         return deduped
 
     def _is_method_related(self, item: EvidenceResult) -> bool:
-        haystack = f"{item.section}\n{item.text}".lower()
-        return any(keyword.lower() in haystack for keyword in self.METHOD_KEYWORDS)
-
-    async def _build_card(
-        self,
-        title: str,
-        evidence: List[EvidenceResult],
-    ) -> LiteratureCard:
-        payload = [
-            {
-                "chunk_id": item.chunk_id,
-                "page": item.page_number,
-                "text": item.text[:1200],
-                "is_ocr": item.is_ocr,
-            }
-            for item in evidence
-        ]
-        prompt = (
-            "你是一位严谨的学术论文评审专家。请基于论文原文（Evidence），为研究者生成一份结构化的文献分析卡片。用中文回答。\n"
-            "只能使用提供的 Evidence 内容，不要编造任何信息。返回 JSON，字段如下：\n"
-            "research_topic：研究主题（3-10个字）\n"
-            "research_question：核心研究问题（1-2句话）\n"
-            "method：主要研究方法（1-3句话）\n"
-            "contribution：主要贡献与创新点（1-3句话）\n"
-            "risks：研究局限或潜在风险（列出2-3条）\n"
-            f"\n论文标题：{title}\n"
-            f"\nEvidence：{json.dumps(payload, ensure_ascii=False)}"
-        )
-        fallback = LiteratureCard(
-            risks=["Model output could not be parsed; manual review is required."],
-        )
-        started = time.perf_counter()
-        try:
-            result = await validate_structured(
-                gateway=self.model_gateway,
-                prompt=prompt,
-                validator=LiteratureCard.model_validate,
-                fallback=fallback,
-            )
-            record_model_call(
-                self.db,
-                "paper_quick_analysis",
-                self.model_gateway.model_name,
-                started,
-                result.retries,
-                True,
-            )
-            return result.value
-        except Exception as exc:
-            record_model_call(
-                self.db,
-                "paper_quick_analysis",
-                self.model_gateway.model_name,
-                started,
-                0,
-                False,
-                exc,
-            )
-            raise
-
-    async def _build_comparison(
-        self,
-        papers: List[Paper],
-        evidence_by_paper: dict[str, List[EvidenceResult]],
-    ) -> PaperComparison:
-        payload = [
-            {
-                "paper_id": paper.id,
-                "title": paper.title,
-                "evidence": [
-                    {
-                        "chunk_id": item.chunk_id,
-                        "page": item.page_number,
-                        "text": item.text[:1000],
-                        "is_ocr": item.is_ocr,
-                    }
-                    for item in evidence_by_paper[paper.id]
-                ],
-            }
-            for paper in papers
-        ]
-        prompt = (
-            "你是一位严谨的学术论文评审专家。请基于多篇论文的原文（Evidence），生成一份结构化的对比分析报告。用中文回答。\n"
-            "只能使用提供的 Evidence 内容，不要编造信息。返回 JSON，字段如下：\n"
-            "overview：总体概述（1-2句话）\n"
-            "findings：对比发现，数组，每项包含 dimension（对比维度）、summary（对比总结）、evidence_notes（证据说明）\n"
-            "transferable_insights：可迁移的洞察（列出2-3条）\n"
-            "risks：潜在风险（列出2-3条）\n"
-            f"\n论文列表：{json.dumps(payload, ensure_ascii=False)}"
-        )
-        fallback = PaperComparison(
-            risks=["Model output could not be parsed; manual review is required."],
-        )
-        started = time.perf_counter()
-        try:
-            result = await validate_structured(
-                gateway=self.model_gateway,
-                prompt=prompt,
-                validator=PaperComparison.model_validate,
-                fallback=fallback,
-            )
-            record_model_call(
-                self.db,
-                "paper_comparison",
-                self.model_gateway.model_name,
-                started,
-                result.retries,
-                True,
-            )
-            return result.value
-        except Exception as exc:
-            record_model_call(
-                self.db,
-                "paper_comparison",
-                self.model_gateway.model_name,
-                started,
-                0,
-                False,
-                exc,
-            )
-            raise
+        return self._matches_keywords(item, self.METHOD_KEYWORDS)
 
     @staticmethod
-    def _to_markdown(
+    def _matches_keywords(item: EvidenceResult, keywords) -> bool:
+        haystack = f"{item.section}\n{item.text}".lower()
+        return any(keyword.lower() in haystack for keyword in keywords)
+
+    @staticmethod
+    def _quick_report_fallback(
         title: str,
-        card: LiteratureCard,
         evidence: List[EvidenceResult],
     ) -> str:
-        risks = "\n".join(f"- {risk}" for risk in card.risks) or "- None stated"
         evidence_lines = "\n".join(
-            f"- Page {item.page_number}: {item.text[:160]}"
+            f"- 第 {item.page_number} 页：{item.text[:180]}"
             for item in evidence
-        ) or "- No stored evidence chunks were available."
+        ) or "- 暂无已解析正文。"
         return (
-            f"# {title} Literature Card\n\n"
-            f"## Research Topic\n\n{card.research_topic}\n\n"
-            f"## Research Question\n\n{card.research_question}\n\n"
-            f"## Method\n\n{card.method}\n\n"
-            f"## Contribution\n\n{card.contribution}\n\n"
-            f"## Risks\n\n{risks}\n\n"
-            f"## Evidence\n\n{evidence_lines}\n"
+            f"# {title} 论文解读\n\n"
+            "当前没有可供模型精读的完整正文；以下为系统根据已解析页面整理的阅读入口。\n\n"
+            f"## 原文摘录\n\n{evidence_lines}\n"
         )
 
-    @staticmethod
-    def _comparison_to_markdown(
+    def _comparison_report_fallback(
+        self,
         papers: List[Paper],
-        comparison: PaperComparison,
         evidence_by_paper: dict[str, List[EvidenceResult]],
     ) -> str:
         paper_lines = "\n".join(f"- {paper.title}" for paper in papers)
-        finding_lines = "\n".join(
-            f"### {item.dimension}\n\n{item.summary}\n"
-            for item in comparison.findings
-        ) or "No validated comparison findings were produced.\n"
-        insights = (
-            "\n".join(f"- {item}" for item in comparison.transferable_insights)
-            or "- None stated"
-        )
-        risks = "\n".join(f"- {item}" for item in comparison.risks) or "- None stated"
         evidence_lines = []
-        for paper in papers:
-            evidence_lines.append(f"### {paper.title}")
-            paper_evidence = evidence_by_paper.get(paper.id, [])
-            if not paper_evidence:
-                evidence_lines.append("- No stored evidence chunks were available.")
-                continue
-            evidence_lines.extend(
-                f"- Page {item.page_number}: {item.text[:140]}"
-                for item in paper_evidence
-            )
+        for dimension, keywords in self.COMPARISON_DIMENSIONS.items():
+            evidence_lines.append(f"## {dimension}")
+            for paper in papers:
+                evidence = [
+                    item for item in evidence_by_paper.get(paper.id, [])
+                    if self._matches_keywords(item, keywords)
+                ] or evidence_by_paper.get(paper.id, [])[:2]
+                if evidence:
+                    item = evidence[0]
+                    evidence_lines.append(
+                        f"- {paper.title}，第 {item.page_number} 页："
+                        f"{item.text[:180]}"
+                    )
+            if evidence_lines[-1] == f"## {dimension}":
+                evidence_lines.append("- 暂无可用正文摘录。")
         return (
-            "# Paper Comparison\n\n"
-            f"## Papers\n\n{paper_lines}\n\n"
-            f"## Overview\n\n{comparison.overview}\n\n"
-            f"## Findings\n\n{finding_lines}\n"
-            f"## Transferable Insights\n\n{insights}\n\n"
-            f"## Risks\n\n{risks}\n\n"
-            f"## Evidence\n\n{chr(10).join(evidence_lines)}\n"
+            "# 论文对比报告\n\n"
+            f"## 对比论文\n\n{paper_lines}\n\n"
+            "当前没有可供模型对比的完整正文；以下为系统根据已解析页面整理的对比入口。\n\n"
+            + "\n\n".join(evidence_lines)
+            + "\n"
         )

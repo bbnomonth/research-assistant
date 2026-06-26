@@ -19,6 +19,10 @@ class ApiFakeGateway:
                 '[{"arxiv_id":"2401.00001","reason":"高度相关",'
                 '"purpose_labels":["方法相似"]}]'
             )
+        elif "完整全面的论文解读" in prompt:
+            yield "# paper.pdf 论文解读\n\n第 1 页内容显示该论文讨论机器学习与车辆路径问题。"
+        elif "中文对比报告" in prompt:
+            yield "# 论文对比报告\n\n这些论文都围绕车辆路径优化展开，方法证据存在差异。"
         elif "文献卡片" in prompt:
             yield (
                 '{"research_topic":"Vehicle routing",'

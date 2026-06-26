@@ -6,10 +6,11 @@ from pydantic import BaseModel, Field
 
 
 class ChatMode(str, Enum):
-    GENERAL_QA = "general_qa"
+    OTHER = "other"
     LITERATURE_DISCOVERY = "literature_discovery"
     PAPER_READING = "paper_reading"
-    RESEARCH_DIAGNOSIS = "research_diagnosis"
+    TOPIC_GUIDANCE = "topic_guidance"
+    FRAMEWORK_BUILDING = "framework_building"
 
 
 class ChatRequest(BaseModel):
