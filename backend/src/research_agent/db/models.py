@@ -72,6 +72,7 @@ class Message(Base):
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text)
     mode: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
     sequence: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

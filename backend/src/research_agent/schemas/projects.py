@@ -77,6 +77,7 @@ class MessageResponse(BaseModel):
     role: str
     content: str
     mode: Optional[str]
+    metadata: Dict[str, Any] = Field(default_factory=dict)
     sequence: int
     created_at: datetime
 
@@ -88,6 +89,7 @@ class MessageResponse(BaseModel):
             role=message.role,
             content=message.content,
             mode=message.mode,
+            metadata=json.loads(message.metadata_json or "{}"),
             sequence=message.sequence,
             created_at=message.created_at,
         )

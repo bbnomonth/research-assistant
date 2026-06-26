@@ -53,6 +53,7 @@ export interface Message {
   role: 'user' | 'assistant' | 'system';
   content: string;
   mode: string | null;
+  metadata?: Record<string, unknown>;
   sequence: number;
   created_at: string;
 }
@@ -121,6 +122,28 @@ export interface PaperComparisonResponse {
   title: string;
   evidence_pages: Record<string, number[]>;
 }
+
+export interface FrameworkCardRequest {
+  project_id: string;
+  session_id: string;
+}
+
+export interface FrameworkCardResponse {
+  id: string;
+  project_id: string;
+  artifact_type: string;
+  title: string;
+  content: Record<string, unknown>;
+  markdown: string;
+  created_at: string;
+}
+
+export interface TopicGuidanceCardRequest {
+  project_id: string;
+  session_id: string;
+}
+
+export type TopicGuidanceCardResponse = FrameworkCardResponse;
 
 export interface ArtifactSummary {
   id: string;
@@ -197,6 +220,7 @@ export interface LiteratureDiscoveryResult {
   query: string;
   candidates: ArxivPaper[];
   recommendations: RecommendedPaper[];
+  candidate_summaries?: Record<string, string>;
 }
 
 export type StreamEventName =
@@ -206,6 +230,8 @@ export type StreamEventName =
   | 'search_results'
   | 'evidence'
   | 'artifact'
+  | 'framework_card_offer'
+  | 'topic_guidance_card_offer'
   | 'token'
   | 'done'
   | 'error';

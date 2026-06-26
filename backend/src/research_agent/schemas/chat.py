@@ -21,6 +21,16 @@ class ChatRequest(BaseModel):
     mode_override: Optional[ChatMode] = None
 
 
+class FrameworkCardRequest(BaseModel):
+    project_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+
+
+class TopicGuidanceCardRequest(BaseModel):
+    project_id: str = Field(min_length=1)
+    session_id: str = Field(min_length=1)
+
+
 class StreamEvent(BaseModel):
     event: str
     data: Dict[str, Any]

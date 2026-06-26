@@ -12,6 +12,7 @@ class ApiFakeGateway:
 
     async def stream_chat(self, messages):
         prompt = messages[-1]["content"]
+        full_prompt = "\n".join(item.get("content", "") for item in messages)
         if "英文检索式" in prompt:
             yield '{"english_query":"vehicle routing"}'
         elif "候选文献" in prompt:
@@ -23,6 +24,30 @@ class ApiFakeGateway:
             yield "# paper.pdf 论文解读\n\n第 1 页内容显示该论文讨论机器学习与车辆路径问题。"
         elif "中文对比报告" in prompt:
             yield "# 论文对比报告\n\n这些论文都围绕车辆路径优化展开，方法证据存在差异。"
+        elif "结构化论文框架卡片" in full_prompt:
+            yield (
+                '{"title_suggestion":"基于机器学习的车辆路径优化研究",'
+                '"research_questions":["如何提升路径优化效率？"],'
+                '"core_logic":"从问题界定到算法设计再到实验验证。",'
+                '"chapter_structure":[{"chapter":"第一章",'
+                '"title":"绪论","key_points":"研究背景与问题提出"}],'
+                '"research_methods":["算法设计","对比实验"],'
+                '"innovations":["面向具体场景的模型改进"],'
+                '"dialogue_summary":"用户已明确研究方向，并形成初步框架。"}'
+            )
+        elif "选题方案 Markdown" in full_prompt:
+            yield (
+                "# 选题方案\n\n"
+                "## 方向一：基于强化学习的城市配送路径优化\n\n"
+                "**核心研究问题**：如何利用强化学习算法提升多约束城市配送路径的求解效率与解质量？\n\n"
+                "**推荐依据**：学生具备运筹学基础，掌握算法设计能力，数据资源可通过企业合作或公开数据集获取，研究兴趣在智能优化方向。\n\n"
+                "## 方向二：考虑碳排放的绿色车辆路径问题\n\n"
+                "**核心研究问题**：如何将碳排放约束纳入车辆路径优化模型，平衡成本与环保目标？\n\n"
+                "**推荐依据**：与碳中和政策热点契合，文献基础扎实，方法以多目标优化为主，风险较低。\n\n"
+                "---\n\n"
+                "## 整体选型建议\n\n"
+                "若侧重理论深度，优先选方向一；若偏重实践落地，选方向二。"
+            )
         elif "文献卡片" in prompt:
             yield (
                 '{"research_topic":"Vehicle routing",'

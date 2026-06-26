@@ -47,6 +47,7 @@ class ConversationRepository:
         role: str,
         content: str,
         mode: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Message:
         current_max = self.db.scalar(
             select(func.max(Message.sequence)).where(
@@ -58,6 +59,7 @@ class ConversationRepository:
             role=role,
             content=content,
             mode=mode,
+            metadata_json=json.dumps(metadata or {}, ensure_ascii=False),
             sequence=(current_max or 0) + 1,
         )
         self.db.add(message)

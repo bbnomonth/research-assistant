@@ -5,6 +5,8 @@ import type {
   ChatMode,
   DiagnosticResult,
   EvidenceSearchResponse,
+  FrameworkCardRequest,
+  FrameworkCardResponse,
   HealthResponse,
   Message,
   Paper,
@@ -18,6 +20,8 @@ import type {
   SessionUpdateRequest,
   StreamEvent,
   TaskRecord,
+  TopicGuidanceCardRequest,
+  TopicGuidanceCardResponse,
   UploadResponse,
 } from '@/types/api';
 
@@ -230,10 +234,12 @@ export const api = {
 
   uploadPdf: (file: File, projectId?: string) =>
     uploadFile('/api/papers/upload', file, projectId ? { project_id: projectId } : {}),
+  getPaper: (paperId: string) => request<Paper>(`/api/papers/${paperId}`),
   searchEvidence: (paperId: string, query: string) =>
     request<EvidenceSearchResponse>(
       `/api/papers/${paperId}/evidence?q=${encodeURIComponent(query)}`,
     ),
+  paperPdfUrl: (paperId: string) => `${BASE}/api/papers/${paperId}/pdf`,
   importArxivPdf: (paperId: string) =>
     request<UploadResponse>(`/api/papers/${paperId}/import-pdf`, { method: 'POST' }),
   quickAnalysis: (paperId: string) =>
@@ -243,6 +249,16 @@ export const api = {
     ),
   comparePapers: (body: PaperComparisonRequest) =>
     request<PaperComparisonResponse>('/api/papers/compare', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createFrameworkCard: (body: FrameworkCardRequest) =>
+    request<FrameworkCardResponse>('/api/chat/framework/card', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createTopicGuidanceCard: (body: TopicGuidanceCardRequest) =>
+    request<TopicGuidanceCardResponse>('/api/chat/topic/card', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

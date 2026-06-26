@@ -18,7 +18,7 @@ class ReadingGateway:
         self.prompt = ""
 
     async def stream_chat(self, messages):
-        self.prompt = messages[-1]["content"]
+        self.prompt = "\n".join(item["content"] for item in messages)
         if self.completed:
             yield "你已经完成了主要精读路径。请回到第 2 页核对方法证据，并用一句话说明它如何支撑论文贡献。"
             return
@@ -84,9 +84,10 @@ def test_guided_reading_returns_feedback_without_artifact(tmp_path) -> None:
     assert result.evidence_pages == [2]
     assert chunks[0].id in gateway.prompt
     assert "learning-guided vehicle routing" in gateway.prompt
-    assert "JSON 字段" not in gateway.prompt
-    assert "不要输出 JSON" in gateway.prompt
-    assert "只输出一段自然中文" in gateway.prompt
+    assert "苏格拉底式提问法" in gateway.prompt
+    assert "每次优先提出 1 个关键问题" in gateway.prompt
+    assert "始终要求回到原文" in gateway.prompt
+    assert "论文原文片段" in gateway.prompt
 
 
 def test_guided_reading_completion_creates_artifact(tmp_path) -> None:

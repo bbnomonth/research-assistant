@@ -9,7 +9,12 @@ import type {
 } from '@/types/api';
 
 export interface ChatTurnAttachment {
-  type: 'search_results' | 'artifact' | 'evidence';
+  type:
+    | 'search_results'
+    | 'artifact'
+    | 'evidence'
+    | 'framework_card_offer'
+    | 'topic_guidance_card_offer';
   data: unknown;
 }
 
@@ -35,6 +40,8 @@ export interface ChatTurn {
   projectId?: string;
   sessionId?: string;
   paperId?: string;
+  paperTitle?: string;
+  paperArxivId?: string;
   pending?: boolean;
   error?: string;
   errorCode?: string;
@@ -86,7 +93,9 @@ interface AppState {
   // Streaming
   streaming: boolean;
   streamingSessionId: string | null;
+  streamingSessionIds: string[];
   setStreaming: (sessionId: string | null) => void;
+  clearStreaming: (sessionId: string) => void;
 
   reset: () => void;
 }
@@ -187,8 +196,34 @@ export const useAppStore = create<AppState>((set) => ({
 
   streaming: false,
   streamingSessionId: null,
+  streamingSessionIds: [],
   setStreaming: (sessionId) =>
-    set({ streaming: sessionId !== null, streamingSessionId: sessionId }),
+    set((state) => {
+      if (sessionId === null) {
+        return {
+          streaming: false,
+          streamingSessionId: null,
+          streamingSessionIds: [],
+        };
+      }
+      const ids = state.streamingSessionIds.includes(sessionId)
+        ? state.streamingSessionIds
+        : [...state.streamingSessionIds, sessionId];
+      return {
+        streaming: ids.length > 0,
+        streamingSessionId: sessionId,
+        streamingSessionIds: ids,
+      };
+    }),
+  clearStreaming: (sessionId) =>
+    set((state) => {
+      const ids = state.streamingSessionIds.filter((id) => id !== sessionId);
+      return {
+        streaming: ids.length > 0,
+        streamingSessionId: ids[ids.length - 1] ?? null,
+        streamingSessionIds: ids,
+      };
+    }),
 
   reset: () =>
     set({
@@ -202,5 +237,6 @@ export const useAppStore = create<AppState>((set) => ({
       artifactsByProject: {},
       streaming: false,
       streamingSessionId: null,
+      streamingSessionIds: [],
     }),
 }));

@@ -3,10 +3,11 @@ from typing import AsyncIterator, Optional
 
 from sqlalchemy.orm import Session
 
-from research_agent.db.models import ModelCallLog
+from research_agent.db.models import ModelCallLog, Paper
 from research_agent.repositories.conversations import ConversationRepository
 from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.chat import ChatMode, StreamEvent
+from research_agent.schemas.literature import LiteratureDiscoveryResult, RecommendedPaper
 from research_agent.services.arxiv_search import ArxivSearchProvider
 from research_agent.services.guided_reading import GuidedReadingService
 from research_agent.services.literature import (
@@ -17,8 +18,14 @@ from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
 )
-from research_agent.services.topic_guidance import TopicGuidanceService
-from research_agent.services.research_diagnosis import FrameworkBuilder
+from research_agent.services.topic_guidance import (
+    TopicGuidanceService,
+    is_topic_guidance_final_plan,
+)
+from research_agent.services.research_diagnosis import (
+    FrameworkBuilder,
+    is_framework_final_plan,
+)
 from research_agent.services.intent_classifier import (
     classify_by_keywords,
     classify_intent,
@@ -34,6 +41,33 @@ def derive_session_title(content: str, max_length: int = 24) -> str:
     if len(cleaned) > max_length:
         cleaned = cleaned[: max_length - 1].rstrip() + "…"
     return cleaned
+
+
+def _unique_evidence_pages(evidence) -> list[int]:
+    pages = []
+    for item in evidence:
+        if item.page_number not in pages:
+            pages.append(item.page_number)
+    return pages
+
+
+def _papers_to_cache(result: LiteratureDiscoveryResult) -> list[RecommendedPaper]:
+    by_id = {item.paper.arxiv_id: item for item in result.recommendations}
+    cached: list[RecommendedPaper] = list(result.recommendations)
+    for paper in result.candidates:
+        if paper.arxiv_id in by_id:
+            continue
+        cached.append(
+            RecommendedPaper(
+                paper=paper,
+                reason=result.candidate_summaries.get(
+                    paper.arxiv_id,
+                    "该文献与当前检索主题相关，建议进一步查看摘要。",
+                ),
+                purpose_labels=["候选文献"],
+            )
+        )
+    return cached
 
 
 async def generate_session_title_from_model(
@@ -129,7 +163,12 @@ class ConversationService:
         is_first_user_message = not any(
             message.role == "user" for message in existing_messages
         )
-        self.repository.add_message(conversation.id, "user", content)
+        self.repository.add_message(
+            conversation.id,
+            "user",
+            content,
+            metadata=self._paper_message_metadata(paper_id),
+        )
 
         if is_first_user_message and not conversation.title:
             if self.model_gateway is not None:
@@ -477,7 +516,7 @@ class ConversationService:
         )
         PaperRepository(self.db).upsert_arxiv_papers(
             project_id,
-            result.recommendations,
+            _papers_to_cache(result),
         )
         rec_count = len(result.recommendations)
         summary = (
@@ -490,6 +529,7 @@ class ConversationService:
             "assistant",
             summary,
             mode=ChatMode.LITERATURE_DISCOVERY.value,
+            metadata={"search_results": result.model_dump()},
         )
         self.db.commit()
         yield StreamEvent(
@@ -525,10 +565,11 @@ class ConversationService:
             event="stage",
             data={"name": "reading_guidance", "label": "生成阅读反馈"},
         )
-        result = await GuidedReadingService(
+        result = None
+        async for event in GuidedReadingService(
             db=self.db,
             model_gateway=self.model_gateway,
-        ).guide(
+        ).stream_guide(
             project_id=project_id,
             paper_id=paper_id,
             user_input=content,
@@ -536,10 +577,24 @@ class ConversationService:
                 {"role": item.role, "content": item.content}
                 for item in history
             ],
-        )
-        response = result.turn.feedback
-        if result.turn.next_question:
-            response = f"{response}\n\n{result.turn.next_question}".strip()
+        ):
+            if event["type"] == "token":
+                yield StreamEvent(event="token", data={"content": event["content"]})
+            elif event["type"] == "done":
+                result = event
+
+        if result is None:
+            yield StreamEvent(
+                event="error",
+                data={"message": "引导式精读未生成有效回复。"},
+            )
+            return
+        turn = result["turn"]
+        evidence = result["evidence"]
+        artifact = result["artifact"]
+        response = turn.feedback
+        if turn.next_question:
+            response = f"{response}\n\n{turn.next_question}".strip()
         self.repository.add_message(
             session_id,
             "assistant",
@@ -549,20 +604,34 @@ class ConversationService:
         self.db.commit()
         yield StreamEvent(
             event="evidence",
-            data={"paper_id": paper_id, "pages": result.evidence_pages},
+            data={
+                "paper_id": paper_id,
+                "pages": _unique_evidence_pages(evidence),
+            },
         )
-        if result.artifact is not None:
+        if artifact is not None:
             yield StreamEvent(
                 event="artifact",
                 data={
-                    "artifact_id": result.artifact.id,
-                    "artifact_type": result.artifact.artifact_type,
-                    "title": result.artifact.title,
-                    "evidence_pages": result.evidence_pages,
+                    "artifact_id": artifact.id,
+                    "artifact_type": artifact.artifact_type,
+                    "title": artifact.title,
+                    "evidence_pages": _unique_evidence_pages(evidence),
                 },
             )
-        yield StreamEvent(event="token", data={"content": response})
         yield StreamEvent(event="done", data={"content": response})
+
+    def _paper_message_metadata(self, paper_id: Optional[str]) -> dict:
+        if not paper_id:
+            return {}
+        paper = self.db.get(Paper, paper_id)
+        if paper is None:
+            return {"paper_id": paper_id}
+        return {
+            "paper_id": paper.id,
+            "paper_title": paper.title,
+            "paper_arxiv_id": paper.arxiv_id,
+        }
 
     async def _stream_topic_guidance(
         self,
@@ -575,53 +644,50 @@ class ConversationService:
             {"role": item.role, "content": item.content}
             for item in history
         ]
+        # Drop trailing duplicate user message (same logic as _stream_framework_building)
+        while (
+            history_dicts
+            and history_dicts[-1].get("role") == "user"
+            and history_dicts[-1].get("content") == content
+        ):
+            history_dicts.pop()
 
         svc = TopicGuidanceService(db=self.db, model_gateway=self.model_gateway)
 
-        question_done = False
-        plan_artifact_id: str | None = None
-        plan_artifact_title: str | None = None
+        try:
+            pieces = []
+            async for token in svc.stream_guidance(
+                history=history_dicts,
+                user_input=content,
+            ):
+                pieces.append(token)
+                yield StreamEvent(event="token", data={"content": token})
+        except Exception:
+            yield StreamEvent(
+                event="error",
+                data={"message": "选题导师暂时不可用，请稍后重试。"},
+            )
+            return
 
-        async for event in svc.stream_guidance(
-            project_id=project_id,
-            session_id=session_id,
-            user_input=content,
-            history=history_dicts,
-        ):
-            evt_type = event["type"]
+        assistant_text = "".join(pieces).strip()
+        self.repository.add_message(
+            session_id,
+            "assistant",
+            assistant_text,
+            mode=ChatMode.TOPIC_GUIDANCE.value,
+        )
+        self.db.commit()
 
-            if evt_type == "token":
-                yield StreamEvent(event="token", data={"content": event["content"]})
-
-            elif evt_type == "done_question":
-                question_done = True
-                self.repository.add_message(
-                    session_id,
-                    "assistant",
-                    event["content"],
-                    mode=ChatMode.TOPIC_GUIDANCE.value,
-                )
-                self.db.commit()
-                yield StreamEvent(event="done", data={"content": event["content"]})
-
-            elif evt_type == "artifact":
-                plan_artifact_id = event["artifact_id"]
-                plan_artifact_title = event["title"]
-                yield StreamEvent(
-                    event="artifact",
-                    data={
-                        "artifact_id": plan_artifact_id,
-                        "artifact_type": event["artifact_type"],
-                        "title": plan_artifact_title,
-                        "evidence_pages": [],
-                    },
-                )
-
-            elif evt_type == "plan_error":
-                yield StreamEvent(event="error", data={"message": event["content"]})
-
-            elif evt_type == "error":
-                yield StreamEvent(event="error", data={"message": event.get("message", "选题导师暂时不可用")})
+        if is_topic_guidance_final_plan(assistant_text):
+            yield StreamEvent(
+                event="topic_guidance_card_offer",
+                data={
+                    "project_id": project_id,
+                    "session_id": session_id,
+                    "title": "整理为选题卡片",
+                },
+            )
+        yield StreamEvent(event="done", data={"content": assistant_text})
 
     async def _stream_framework_building(
         self,
@@ -647,10 +713,13 @@ class ConversationService:
         svc = FrameworkBuilder(db=self.db, model_gateway=self.model_gateway)
 
         try:
-            result = await svc.chat(
+            pieces = []
+            async for token in svc.stream_chat(
                 history=history_dicts,
                 user_input=user_input,
-            )
+            ):
+                pieces.append(token)
+                yield StreamEvent(event="token", data={"content": token})
         except Exception:
             yield StreamEvent(
                 event="error",
@@ -658,7 +727,7 @@ class ConversationService:
             )
             return
 
-        assistant_text = result.assistant_message
+        assistant_text = "".join(pieces).strip()
         self.repository.add_message(
             session_id,
             "assistant",
@@ -666,4 +735,13 @@ class ConversationService:
             mode=ChatMode.FRAMEWORK_BUILDING.value,
         )
         self.db.commit()
+        if is_framework_final_plan(assistant_text):
+            yield StreamEvent(
+                event="framework_card_offer",
+                data={
+                    "project_id": project_id,
+                    "session_id": session_id,
+                    "title": "整理为框架卡片",
+                },
+            )
         yield StreamEvent(event="done", data={"content": assistant_text})

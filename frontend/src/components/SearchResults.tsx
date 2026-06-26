@@ -39,7 +39,12 @@ function getArr(v: unknown): unknown[] {
 }
 
 export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
-  const payload = data as { query?: unknown; candidates?: unknown[]; recommendations?: unknown[] };
+  const payload = data as {
+    query?: unknown;
+    candidates?: unknown[];
+    recommendations?: unknown[];
+    candidate_summaries?: Record<string, unknown>;
+  };
   const candidates = getArr(payload.candidates);
   const recommendations = getArr(payload.recommendations);
 
@@ -88,11 +93,12 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
               categories={getArr(paper.categories).join(', ')}
               abstract={getStr(paper.abstract)}
               entryUrl={getStr(paper.entry_url)}
-              pdfUrl={getStr(paper.pdf_url)}
-              arxivId={getStr(paper.arxiv_id)}
-              reason={getStr(rec.reason)}
-              purposeLabels={getArr(rec.purpose_labels).map(getStr)}
-              activeProjectId={activeProjectId}
+                pdfUrl={getStr(paper.pdf_url)}
+                arxivId={getStr(paper.arxiv_id)}
+                initialFavorited={false}
+                reason={getStr(rec.reason)}
+                purposeLabels={getArr(rec.purpose_labels).map(getStr)}
+                activeProjectId={activeProjectId}
             />
           );
         })}
@@ -108,6 +114,11 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
           })
           .map((c: unknown, idx: number) => {
             const paper = c as PaperLike;
+            const candidateLabels = buildCandidateLabels(paper);
+            const candidateSummary = buildCandidateSummary(
+              paper,
+              getStr(payload.candidate_summaries?.[getStr(paper.arxiv_id)]),
+            );
             return (
               <PaperCard
                 key={idx}
@@ -118,6 +129,9 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
                 entryUrl={getStr(paper.entry_url)}
                 pdfUrl={getStr(paper.pdf_url)}
                 arxivId={getStr(paper.arxiv_id)}
+                reason={candidateSummary}
+                purposeLabels={candidateLabels}
+                initialFavorited={false}
                 activeProjectId={activeProjectId}
               />
             );
@@ -125,6 +139,76 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
       </Space>
     </div>
   );
+}
+
+const KEYWORD_PATTERNS: Array<[RegExp, string]> = [
+  [/electric vehicle|evrp|electric.*routing/i, '电动车路径'],
+  [/vehicle routing|vrp|routing problem/i, '车辆路径'],
+  [/route|routing|path planning/i, '路径规划'],
+  [/heuristic|metaheuristic|memetic|genetic|tabu|ant colony|bee algorithm/i, '启发式算法'],
+  [/optimization|optimisation|integer program|programming/i, '优化建模'],
+  [/reinforcement learning|rl\b/i, '强化学习'],
+  [/machine learning|deep learning|neural|transformer/i, '机器学习'],
+  [/graph|tree decomposition|network/i, '图与网络'],
+  [/scheduling|dispatch|logistics/i, '调度物流'],
+  [/redundancy|fault|reliability/i, '可靠性设计'],
+  [/classification|prediction|detection/i, '预测识别'],
+  [/survey|review/i, '综述研究'],
+];
+
+function buildCandidateLabels(paper: PaperLike): string[] {
+  const text = [
+    getStr(paper.title),
+    getStr(paper.abstract),
+    getArr(paper.categories).join(' '),
+  ].join(' ');
+  const labels: string[] = [];
+  for (const [pattern, label] of KEYWORD_PATTERNS) {
+    if (pattern.test(text) && !labels.includes(label)) {
+      labels.push(label);
+    }
+    if (labels.length >= 4) break;
+  }
+  if (!labels.length) labels.push('候选文献');
+  return labels;
+}
+
+function buildCandidateSummary(paper: PaperLike, backendSummary: string): string {
+  const labels = buildCandidateLabels(paper).filter((label) => label !== '候选文献');
+  const year = extractYear(getStr((paper as { published?: unknown }).published));
+  const focus = labels.length
+    ? labels.slice(0, 2).join('、')
+    : inferTitleFocus(getStr(paper.title));
+  const yearText = year ? `，属于${year}年的相关研究` : '';
+  const backendHint = compactBackendSummary(backendSummary);
+  if (backendHint) {
+    return `该文献围绕${focus}展开${yearText}，可作为候选文献进一步核对；摘要提示：${backendHint}`;
+  }
+  return `该文献围绕${focus}展开${yearText}，可作为理解相关方法、应用场景或研究背景的候选文献。`;
+}
+
+function extractYear(value: string): string {
+  const match = value.match(/\b(19|20)\d{2}\b/);
+  return match?.[0] ?? '';
+}
+
+function inferTitleFocus(title: string): string {
+  const cleaned = title
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 3)
+    .slice(0, 4)
+    .join(' ');
+  return cleaned ? `“${cleaned}”相关问题` : '当前检索主题';
+}
+
+function compactBackendSummary(summary: string): string {
+  const cleaned = summary
+    .replace(/^该文献主要关注[:：]\s*/u, '')
+    .replace(/^该文献与当前检索主题相关[，,]\s*/u, '')
+    .trim();
+  if (!cleaned || cleaned === summary.trim()) return '';
+  return cleaned.length > 200 ? `${cleaned.slice(0, 197).trim()}...` : cleaned;
 }
 
 function PaperCard(props: {
@@ -135,12 +219,13 @@ function PaperCard(props: {
   entryUrl: string;
   pdfUrl: string;
   arxivId: string;
+  initialFavorited?: boolean;
   reason?: string;
   purposeLabels?: string[];
   activeProjectId?: string | null;
 }): ReactNode {
   const { message } = AntdApp.useApp();
-  const [favorited, setFavorited] = useState(false);
+  const [favorited, setFavorited] = useState(Boolean(props.initialFavorited));
   const [favoriting, setFavoriting] = useState(false);
 
   const handleFavorite = async () => {

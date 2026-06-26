@@ -3,6 +3,7 @@ from typing import Optional
 from urllib.parse import urlparse
 from uuid import uuid4
 
+import httpx
 from fastapi import (
     APIRouter,
     BackgroundTasks,
@@ -12,6 +13,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.responses import FileResponse, Response
 
 from research_agent.db.models import Paper
 from research_agent.db.models import Task
@@ -26,6 +28,7 @@ from research_agent.schemas.papers import (
     UploadResponse,
 )
 from research_agent.repositories.papers import PaperRepository
+from research_agent.schemas.projects import PaperSummary
 from research_agent.services.paper_analysis import PaperAnalysisService
 from research_agent.services.arxiv_import import ArxivPdfImportService
 from research_agent.services.pdf_processing import PdfProcessor, PdfTooLargeError
@@ -130,6 +133,50 @@ def search_evidence(paper_id: str, q: str, request: Request):
     with database.session_factory() as db:
         results = PaperChunkRepository(db).search(paper_id, q)
         return {"results": [item.as_dict() for item in results]}
+
+
+@router.get("/papers/{paper_id}", response_model=PaperSummary)
+def get_paper(paper_id: str, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        paper = db.get(Paper, paper_id)
+        if paper is None:
+            raise HTTPException(status_code=404, detail="paper not found")
+        return PaperSummary.from_model(paper)
+
+
+@router.get("/papers/{paper_id}/pdf")
+def view_paper_pdf(paper_id: str, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        paper = db.get(Paper, paper_id)
+        if paper is None:
+            raise HTTPException(status_code=404, detail="paper not found")
+        parsed = urlparse(paper.pdf_url)
+        if parsed.scheme in {"http", "https"}:
+            content = _fetch_remote_pdf(
+                paper.pdf_url,
+                max_bytes=request.app.state.settings.pdf_max_bytes,
+            )
+            return Response(
+                content=content,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition": f'inline; filename="{paper.id}.pdf"',
+                    "X-Content-Type-Options": "nosniff",
+                },
+            )
+        path = Path(paper.pdf_url)
+        if not path.exists() or not path.is_file():
+            raise HTTPException(status_code=404, detail="paper PDF not found")
+        return FileResponse(
+            path,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{paper.id}.pdf"',
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
 
 
 @router.post("/papers/favorite")
@@ -301,6 +348,38 @@ def _ensure_upload_project(db, project_id: Optional[str] = None) -> str:
         None,
     )
     return project.id
+
+
+def _fetch_remote_pdf(url: str, max_bytes: int) -> bytes:
+    try:
+        with httpx.stream(
+            "GET",
+            url,
+            follow_redirects=True,
+            timeout=30.0,
+            headers={"User-Agent": "ResearchTrainingAgent/0.1"},
+        ) as response:
+            response.raise_for_status()
+            chunks: list[bytes] = []
+            total = 0
+            for chunk in response.iter_bytes():
+                if not chunk:
+                    continue
+                total += len(chunk)
+                if total > max_bytes:
+                    raise HTTPException(
+                        status_code=413,
+                        detail="PDF exceeds configured size limit.",
+                    )
+                chunks.append(chunk)
+            return b"".join(chunks)
+    except HTTPException:
+        raise
+    except httpx.HTTPError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="failed to fetch paper PDF",
+        ) from exc
 
 
 def _process_uploaded_pdf(

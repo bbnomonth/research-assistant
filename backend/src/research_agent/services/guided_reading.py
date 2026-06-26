@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 import json
 import time
+from collections.abc import AsyncIterator
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
@@ -10,7 +11,37 @@ from research_agent.db.models import Artifact, Paper
 from research_agent.repositories.artifacts import ArtifactRepository
 from research_agent.repositories.paper_chunks import EvidenceResult, PaperChunkRepository
 from research_agent.services.model_call_logging import record_model_call
-from research_agent.services.model_gateway import ModelGateway, collect_chat
+from research_agent.services.model_gateway import ModelGateway
+
+
+_GUIDED_READING_SYSTEM = """你是一名水平高超的资深教授。你的任务是使用苏格拉底式提问法，带领研究生逐步精读学术论文，帮助其理解论文、质疑论文，并将论文中的思想迁移到自己的研究中，当学生已经将绝大部分关键问题 80% 的程度回答正确以后，你再完整地进行最终讲解。
+
+你的核心目标不是直接替学生总结论文，而是通过循序渐进的问题，引导学生自己完成理解、分析、批判和迁移。
+
+请遵守以下原则：
+1. 以提问为主，讲解为辅。
+每次优先提出 1 个关键问题，不要一次性抛出太多问题。
+2. 始终要求回到原文。
+当学生给出判断时，引导其说明依据来自论文中的哪一段、哪张图、哪张表、哪个公式或哪个实验结果。
+3. 按照论文精读逻辑逐步推进，请根据具体情况选择几个问题作为关键进行适当深挖以及和学生深度讨论。
+一般可以次关注，可根据具体情况增加或删减提问：
+* 这篇论文研究什么问题？
+* 作者为什么认为这个问题重要？
+* 已有研究有什么不足？
+* 作者提出了什么方法、模型、框架或观点？
+* 论文的证据是否支持结论？
+* 这篇论文有什么创新？
+* 这篇论文有什么局限？
+4. 根据学生回答灵活追问。
+如果学生理解不清楚，追问概念、依据和逻辑。
+如果学生已经理解基本内容，继续引导其分析研究设计、证据质量、创新性、局限性和可迁移价值。
+5. 不要编造论文内容。
+如果学生没有提供论文全文、摘要、截图或关键段落，不要虚构作者观点、实验结果或结论。应先让学生提供必要材料。
+6. 保持导师式风格。
+语气应启发、严谨、耐心，不要直接否定学生，而是通过问题帮助学生发现理解中的漏洞。
+7. 输出方式保持简洁完整。
+当学生已经充分理解某一部分时，可以给出简短总结，并继续提出下一个问题。
+你的最终目标是帮助学生从“读懂一篇论文”，逐步发展出独立的学术阅读能力、批判性判断能力和研究设计能力。"""
 
 
 class GuidedReadingTurn(BaseModel):
@@ -136,6 +167,50 @@ class GuidedReadingService:
             artifact=artifact,
         )
 
+    async def stream_guide(
+        self,
+        project_id: str,
+        paper_id: str,
+        user_input: str,
+        history: List[Dict[str, str]],
+    ) -> AsyncIterator[Dict]:
+        paper = self.db.get(Paper, paper_id)
+        if paper is None:
+            raise LookupError("paper not found")
+        if paper.project_id != project_id:
+            raise ValueError("paper does not belong to project")
+        if not paper.favorited and not paper.arxiv_id.startswith("upload:"):
+            raise ValueError("paper must be in the paper library before guided reading")
+
+        stage = self._infer_stage(user_input, history)
+        evidence = self._select_evidence(
+            PaperChunkRepository(self.db).list_for_paper(paper_id, limit=80),
+            stage=stage,
+            limit=8,
+        )
+        if not evidence:
+            raise ValueError("paper has no parsed evidence")
+
+        pieces: List[str] = []
+        async for token in self._stream_turn_text(
+            paper=paper,
+            user_input=user_input,
+            history=history[-12:],
+            evidence=evidence,
+            stage=stage,
+        ):
+            pieces.append(token)
+            yield {"type": "token", "content": token}
+
+        turn = self._turn_from_text("".join(pieces), stage, evidence)
+        artifact = self._create_artifact(paper, turn, evidence) if turn.completed else None
+        yield {
+            "type": "done",
+            "turn": turn,
+            "evidence": evidence,
+            "artifact": artifact,
+        }
+
     async def _build_turn(
         self,
         paper: Paper,
@@ -144,6 +219,26 @@ class GuidedReadingService:
         evidence: List[EvidenceResult],
         stage: str,
     ) -> GuidedReadingTurn:
+        pieces = [
+            token
+            async for token in self._stream_turn_text(
+                paper=paper,
+                user_input=user_input,
+                history=history,
+                evidence=evidence,
+                stage=stage,
+            )
+        ]
+        return self._turn_from_text("".join(pieces), stage, evidence)
+
+    def _build_messages(
+        self,
+        paper: Paper,
+        user_input: str,
+        history: List[Dict[str, str]],
+        evidence: List[EvidenceResult],
+        stage: str,
+    ) -> List[Dict[str, str]]:
         payload = [
             {
                 "chunk_id": item.chunk_id,
@@ -154,26 +249,39 @@ class GuidedReadingService:
             }
             for item in evidence
         ]
-        prompt = (
-            "你是一位论文精读导师，请采用苏格拉底提问法引导研究者阅读这篇论文。"
-            "请结合当前阅读阶段、对话历史和论文原文，先用简短反馈指出用户理解中值得保留或需要澄清的点，"
-            "再提出一个具体、可回答的追问；追问要指向论文中的具体页码或段落线索。"
-            "每次只推进一个阅读动作，避免直接替用户总结全文。"
-            "如果用户只是说“带我精读/开始精读”，请先给出本阶段阅读定位，再提出第一个可执行问题。"
-            "请只输出一段自然中文，不要输出 JSON、字段名、寒暄或模板化说明。\n"
-            f"\n论文标题：{paper.title}\n"
-            f"\n建议推进阶段：{stage}（{self.STAGE_LABELS.get(stage, stage)}）\n"
-            f"\n对话历史：{json.dumps(history, ensure_ascii=False)}\n"
-            f"\n研究者本次输入：{user_input}\n"
-            f"\n论文原文：{json.dumps(payload, ensure_ascii=False)}"
+        user_prompt = (
+            f"论文标题：{paper.title}\n"
+            f"当前内部阅读阶段：{stage}（{self.STAGE_LABELS.get(stage, stage)}，仅供你选择追问重点，不要机械声明阶段）\n"
+            f"论文原文片段：{json.dumps(payload, ensure_ascii=False)}\n\n"
+            f"研究者本次输入：{user_input}\n\n"
+            "请基于论文原文片段和对话历史进行导师式回应。优先提出 1 个关键追问；"
+            "如果需要讲解，只做必要铺垫，并要求学生回到原文证据。"
         )
-        fallback = self._fallback_turn(stage, evidence, user_input)
+        return [
+            {"role": "system", "content": _GUIDED_READING_SYSTEM},
+            *history,
+            {"role": "user", "content": user_prompt},
+        ]
+
+    async def _stream_turn_text(
+        self,
+        paper: Paper,
+        user_input: str,
+        history: List[Dict[str, str]],
+        evidence: List[EvidenceResult],
+        stage: str,
+    ) -> AsyncIterator[str]:
+        messages = self._build_messages(
+            paper=paper,
+            user_input=user_input,
+            history=history,
+            evidence=evidence,
+            stage=stage,
+        )
         started = time.perf_counter()
         try:
-            response = await collect_chat(
-                self.model_gateway,
-                [{"role": "user", "content": prompt}],
-            )
+            async for token in self.model_gateway.stream_chat(messages):
+                yield token
             record_model_call(
                 self.db,
                 "guided_reading",
@@ -181,22 +289,6 @@ class GuidedReadingService:
                 started,
                 0,
                 True,
-            )
-            text = response.strip()
-            if not text:
-                return fallback
-            evidence_notes = [
-                f"第 {item.page_number} 页：{item.text[:120]}"
-                for item in evidence[:3]
-            ]
-            completed = stage == "complete"
-            return GuidedReadingTurn(
-                feedback=text,
-                evidence_notes=evidence_notes,
-                next_question="",
-                completed=completed,
-                learning_summary=text if completed else "",
-                socratic_stage=stage,
             )
         except Exception as exc:
             record_model_call(
@@ -209,6 +301,29 @@ class GuidedReadingService:
                 exc,
             )
             raise
+
+    def _turn_from_text(
+        self,
+        text: str,
+        stage: str,
+        evidence: List[EvidenceResult],
+    ) -> GuidedReadingTurn:
+        cleaned = text.strip()
+        if not cleaned:
+            return self._fallback_turn(stage, evidence, "")
+        evidence_notes = [
+            f"第 {item.page_number} 页：{item.text[:120]}"
+            for item in evidence[:3]
+        ]
+        completed = stage == "complete"
+        return GuidedReadingTurn(
+            feedback=cleaned,
+            evidence_notes=evidence_notes,
+            next_question="",
+            completed=completed,
+            learning_summary=cleaned if completed else "",
+            socratic_stage=stage,
+        )
 
     def _infer_stage(
         self,

@@ -43,6 +43,7 @@ class Database:
     def _apply_lightweight_migrations(self) -> None:
         inspector = inspect(self.engine)
         session_columns: set[str] = set()
+        message_columns: set[str] = set()
         paper_columns: set[str] = set()
         if inspector.has_table("sessions"):
             session_columns = {
@@ -51,6 +52,10 @@ class Database:
         if inspector.has_table("papers"):
             paper_columns = {
                 col["name"] for col in inspector.get_columns("papers")
+            }
+        if inspector.has_table("messages"):
+            message_columns = {
+                col["name"] for col in inspector.get_columns("messages")
             }
         with self.engine.begin() as connection:
             if "title" not in session_columns:
@@ -78,6 +83,13 @@ class Database:
                     text(
                         "ALTER TABLE papers "
                         "ADD COLUMN favorited BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
+            if "metadata_json" not in message_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE messages "
+                        "ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'"
                     )
                 )
 

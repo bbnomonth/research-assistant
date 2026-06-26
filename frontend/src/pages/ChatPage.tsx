@@ -10,7 +10,7 @@ import {
   Input,
   List,
   Popconfirm,
-  Segmented,
+  Popover,
   Select,
   Space,
   Spin,
@@ -62,8 +62,7 @@ import {
 import { MarkdownRenderer } from '@/components/MarkdownRenderer';
 
 const { TextArea } = Input;
-
-type ChatModeFilter = 'all' | ChatMode;
+const BOT_AVATAR_STORAGE_KEY = 'research-agent.botAvatar';
 
 interface AttachmentSearchResults {
   type: 'search_results';
@@ -77,7 +76,20 @@ interface AttachmentEvidence {
   type: 'evidence';
   data: { paper_id: string; pages?: number[] };
 }
-type Attachment = AttachmentSearchResults | AttachmentArtifact | AttachmentEvidence;
+interface AttachmentFrameworkCardOffer {
+  type: 'framework_card_offer';
+  data: { project_id: string; session_id: string; title?: string };
+}
+interface AttachmentTopicGuidanceCardOffer {
+  type: 'topic_guidance_card_offer';
+  data: { project_id: string; session_id: string; title?: string };
+}
+type Attachment =
+  | AttachmentSearchResults
+  | AttachmentArtifact
+  | AttachmentEvidence
+  | AttachmentFrameworkCardOffer
+  | AttachmentTopicGuidanceCardOffer;
 
 interface PendingSend {
   content: string;
@@ -107,14 +119,15 @@ export function ChatPage() {
     appendAttachment,
     moveTurns,
     streaming,
+    streamingSessionIds,
     setStreaming,
+    clearStreaming,
   } = useAppStore();
 
   const navigate = useNavigate();
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
-  const [modeFilter, setModeFilter] = useState<ChatModeFilter>('all');
   const [input, setInput] = useState('');
   const [guidedPaperId, setGuidedPaperId] = useState<string | null>(null);
   const [forcePaperReading, setForcePaperReading] = useState(false);
@@ -124,8 +137,12 @@ export function ChatPage() {
   const [lastSend, setLastSend] = useState<PendingSend | null>(null);
   const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
   const [composingNewSession, setComposingNewSession] = useState(false);
+  const [botAvatar, setBotAvatar] = useState<string>(() =>
+    window.localStorage.getItem(BOT_AVATAR_STORAGE_KEY) ?? '',
+  );
 
-  const streamRef = useRef<ChatStreamHandle | null>(null);
+  const streamsRef = useRef<Record<string, ChatStreamHandle>>({});
+  const activeSessionIdRef = useRef<string | null>(null);
   const scrollRef = useAutoScroll<HTMLDivElement>([
     turnsBySession,
     messages,
@@ -137,7 +154,12 @@ export function ChatPage() {
     () => (activeProjectId ? sessionsByProject[activeProjectId] ?? [] : []),
     [activeProjectId, sessionsByProject],
   );
-
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+  const currentSessionStreaming = activeSessionId
+    ? streamingSessionIds.includes(activeSessionId)
+    : false;
   useEffect(() => {
     if (!activeProjectId) {
       setActiveSessionId(null);
@@ -181,27 +203,26 @@ export function ChatPage() {
   }, [activeSessionId]);
 
   const filteredTurns = useMemo(() => {
-    const list = activeSessionId ? turnsBySession[activeSessionId] ?? [] : [];
-    if (modeFilter === 'all') return list;
-    return list.filter(
-      (t) => t.mode === modeFilter || (t.role === 'user' && !t.mode),
-    );
-  }, [turnsBySession, activeSessionId, modeFilter]);
+    return activeSessionId ? turnsBySession[activeSessionId] ?? [] : [];
+  }, [turnsBySession, activeSessionId]);
 
   const visibleMessages = useMemo(() => {
     const turns = activeSessionId
       ? turnsBySession[activeSessionId] ?? []
       : [];
-    const deduped = removeLiveMessageDuplicates(messages, turns);
-    if (modeFilter === 'all') return deduped;
-    return deduped.filter(
-      (message) =>
-        message.role === 'user' || message.mode === modeFilter,
-    );
-  }, [messages, turnsBySession, activeSessionId, modeFilter]);
+    return removeLiveMessageDuplicates(messages, turns);
+  }, [messages, turnsBySession, activeSessionId]);
 
   const showWelcomeCard =
-    !streaming && visibleMessages.length === 0 && filteredTurns.length === 0;
+    !currentSessionStreaming && visibleMessages.length === 0 && filteredTurns.length === 0;
+  const workspaceStatus = useMemo(
+    () =>
+      resolveWorkspaceStatus({
+        currentSessionStreaming,
+        turns: filteredTurns,
+      }),
+    [currentSessionStreaming, filteredTurns],
+  );
 
   const ensureProjectAndSession = async () => {
     let availableProjects = projects;
@@ -256,6 +277,7 @@ export function ChatPage() {
     setStreaming(params.localSessionId);
     setLastSend(params);
     let renderSessionId = params.localSessionId;
+    let streamKey = params.localSessionId;
     let resolvedProjectId = params.projectId;
     let resolvedSessionId = params.sessionId;
 
@@ -281,12 +303,22 @@ export function ChatPage() {
               const metaTitle = event.data.title as string | undefined;
               if (metaSession && metaSession !== renderSessionId) {
                 moveTurns(renderSessionId, metaSession, metaProject);
+                const currentHandle = streamsRef.current[streamKey];
+                if (currentHandle) {
+                  delete streamsRef.current[streamKey];
+                  streamsRef.current[metaSession] = currentHandle;
+                }
+                clearStreaming(streamKey);
+                setStreaming(metaSession);
                 renderSessionId = metaSession;
+                streamKey = metaSession;
               }
               resolvedProjectId = metaProject;
               resolvedSessionId = metaSession;
               setActiveProjectId(metaProject);
-              setActiveSessionId(metaSession);
+              if (activeSessionIdRef.current === params.localSessionId) {
+                setActiveSessionId(metaSession);
+              }
               void api.listProjects().then((response) => {
                 setProjects(response.projects);
               });
@@ -363,6 +395,20 @@ export function ChatPage() {
               });
               break;
             }
+            case 'framework_card_offer': {
+              appendAttachment(renderSessionId, params.replyId, {
+                type: 'framework_card_offer',
+                data: event.data as AttachmentFrameworkCardOffer['data'],
+              });
+              break;
+            }
+            case 'topic_guidance_card_offer': {
+              appendAttachment(renderSessionId, params.replyId, {
+                type: 'topic_guidance_card_offer',
+                data: event.data as AttachmentTopicGuidanceCardOffer['data'],
+              });
+              break;
+            }
             case 'done': {
               const current =
                 useAppStore.getState().turnsBySession[renderSessionId] ?? [];
@@ -397,24 +443,30 @@ export function ChatPage() {
         },
         onClose: () => {
           patchTurn(renderSessionId, params.replyId, { pending: false });
-          setStreaming(null);
-          streamRef.current = null;
+          clearStreaming(streamKey);
+          delete streamsRef.current[streamKey];
           if (resolvedProjectId) void loadSessions(resolvedProjectId);
-          if (resolvedSessionId) void loadMessages(resolvedSessionId);
+          if (resolvedSessionId && activeSessionIdRef.current === resolvedSessionId) {
+            void loadMessages(resolvedSessionId);
+          }
         },
       },
     );
-    streamRef.current = handle;
+    streamsRef.current[streamKey] = handle;
   };
 
   const handleSend = async () => {
     const trimmed = input.trim();
-    if (!trimmed || streaming) return;
+    if (!trimmed || currentSessionStreaming) return;
     try {
       const ctx = await ensureProjectAndSession();
       const turnId = `local-${Date.now()}`;
       const projectId = ctx.projectId;
       const sessionId = ctx.sessionId;
+      const readingPaper =
+        forcePaperReading && guidedPaperId
+          ? papers.find((paper) => paper.id === guidedPaperId)
+          : null;
 
       const turnSessionId = resolveRenderSessionId(sessionId, turnId);
       setComposingNewSession(false);
@@ -442,6 +494,9 @@ export function ChatPage() {
         content: trimmed,
         projectId: projectId ?? undefined,
         sessionId: turnSessionId,
+        paperId: readingPaper?.id,
+        paperTitle: readingPaper?.title,
+        paperArxivId: readingPaper?.arxiv_id,
       });
       setInput('');
 
@@ -476,13 +531,14 @@ export function ChatPage() {
   };
 
   const handleStop = () => {
-    streamRef.current?.close();
-    streamRef.current = null;
-    setStreaming(null);
+    if (!activeSessionId) return;
+    streamsRef.current[activeSessionId]?.close();
+    delete streamsRef.current[activeSessionId];
+    clearStreaming(activeSessionId);
   };
 
   const handleRetry = () => {
-    if (!lastSend || streaming) return;
+    if (!lastSend || streamingSessionIds.includes(lastSend.localSessionId)) return;
     patchTurn(lastSend.localSessionId, lastSend.replyId, {
       content: '',
       pending: true,
@@ -496,7 +552,6 @@ export function ChatPage() {
     setComposingNewSession(true);
     setActiveSessionId(null);
     setMessages([]);
-    setModeFilter('all');
     setStages({});
     setRenamingSessionId(null);
     setSelectedSessionIds(new Set());
@@ -555,10 +610,40 @@ export function ChatPage() {
     setInput((prev) => (prev ? `${prev}\n${template}` : template));
   };
 
+  const handleBotAvatarChange = (value: string) => {
+    const next = value.trim().slice(0, 2);
+    setBotAvatar(next);
+    if (next) {
+      window.localStorage.setItem(BOT_AVATAR_STORAGE_KEY, next);
+    } else {
+      window.localStorage.removeItem(BOT_AVATAR_STORAGE_KEY);
+    }
+  };
+
+  const handleBotAvatarFile = (file: File | undefined) => {
+    if (!file) return;
+    if (!file.type.startsWith('image/')) {
+      toast.warning('请选择图片文件');
+      return;
+    }
+    if (file.size > 512 * 1024) {
+      toast.warning('头像图片请小于 512KB');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = typeof reader.result === 'string' ? reader.result : '';
+      if (!result) return;
+      setBotAvatar(result);
+      window.localStorage.setItem(BOT_AVATAR_STORAGE_KEY, result);
+    };
+    reader.readAsDataURL(file);
+  };
+
   const trimmedInput = input.trim();
   const canSend =
     trimmedInput.length > 0 &&
-    !streaming &&
+    !currentSessionStreaming &&
     (!forcePaperReading || !!guidedPaperId);
 
   if (!activeProjectId && projects.length === 0) {
@@ -573,7 +658,7 @@ export function ChatPage() {
             onStop={handleStop}
             onRetry={handleRetry}
             canRetry={false}
-            streaming={streaming}
+            streaming={currentSessionStreaming}
             canSend={canSend}
             forcePaperReading={forcePaperReading}
             onTogglePaperReading={(checked) => {
@@ -591,7 +676,13 @@ export function ChatPage() {
   }
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '260px 1fr', gap: 16 }}>
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: '260px minmax(0, 1fr)',
+        gap: 16,
+      }}
+    >
       <Card
         title={
           <Space size={6}>
@@ -670,21 +761,39 @@ export function ChatPage() {
           <Space wrap>
             <span>对话工作台</span>
             <Badge
-              status={streaming ? 'processing' : 'success'}
-              text={streaming ? '正在生成…' : '空闲'}
+              color={workspaceStatus.color}
+              text={workspaceStatus.text}
             />
-            <Segmented
-              size="small"
-              value={modeFilter}
-              onChange={(v) => setModeFilter(v as ChatModeFilter)}
-              options={[
-                { label: '全部', value: 'all' },
-                { label: '选题', value: 'topic_guidance' },
-                { label: '框架', value: 'framework_building' },
-                { label: '检索', value: 'literature_discovery' },
-                { label: '精读', value: 'paper_reading' },
-              ]}
-            />
+            <Popover
+              trigger="click"
+              placement="bottomRight"
+              content={
+                <Space direction="vertical" size={8}>
+                  <Input
+                    size="small"
+                    value={botAvatar.startsWith('data:image/') ? '' : botAvatar}
+                    maxLength={2}
+                    placeholder="头像文字"
+                    allowClear
+                    onChange={(e) => handleBotAvatarChange(e.target.value)}
+                    style={{ width: 120 }}
+                  />
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => handleBotAvatarFile(e.target.files?.[0])}
+                    style={{ width: 160, fontSize: 12 }}
+                  />
+                  <Button size="small" onClick={() => handleBotAvatarChange('')}>
+                    恢复默认
+                  </Button>
+                </Space>
+              }
+            >
+              <Tooltip title="设置机器人头像">
+                <Button size="small" icon={<RobotOutlined />} />
+              </Tooltip>
+            </Popover>
           </Space>
         }
         styles={{
@@ -705,13 +814,19 @@ export function ChatPage() {
           ) : (
             <>
               {visibleMessages.map((item) => (
-                <ChatMessage key={item.id} message={item} projectId={activeProjectId} />
+                <ChatMessage
+                  key={item.id}
+                  message={item}
+                  projectId={activeProjectId}
+                  botAvatar={botAvatar}
+                />
               ))}
               {filteredTurns.map((item) => (
                 <ChatMessage
                   key={item.id}
                   turn={item}
                   projectId={activeProjectId}
+                  botAvatar={botAvatar}
                   onRetry={handleRetry}
                   onPickPaper={() => navigate('/papers')}
                 />
@@ -725,8 +840,8 @@ export function ChatPage() {
           onSend={handleSend}
           onStop={handleStop}
           onRetry={handleRetry}
-          canRetry={!!lastSend && !streaming}
-          streaming={streaming}
+          canRetry={!!lastSend && !currentSessionStreaming}
+          streaming={currentSessionStreaming}
           canSend={canSend}
           forcePaperReading={forcePaperReading}
           onTogglePaperReading={(checked) => {
@@ -768,19 +883,28 @@ interface ChatMessageProps {
   message?: Message;
   turn?: ChatTurn;
   projectId?: string | null;
+  botAvatar?: string;
   onRetry?: () => void;
   onPickPaper?: () => void;
 }
 
-function ChatMessage({ message, turn, projectId, onRetry, onPickPaper }: ChatMessageProps) {
+function ChatMessage({
+  message,
+  turn,
+  projectId,
+  botAvatar,
+  onRetry,
+  onPickPaper,
+}: ChatMessageProps) {
   const navigate = useNavigate();
   const isUser = message ? message.role === 'user' : turn?.role === 'user';
   const content = message?.content ?? turn?.content ?? '';
+  const paperCard = resolveMessagePaperCard(message, turn);
   const pending = turn?.pending ?? false;
   const error = turn?.error;
   const errorCode = turn?.errorCode;
   const mode = (message?.mode as ChatMode | undefined) ?? turn?.mode;
-  const attachments = turn?.attachments ?? [];
+  const attachments = turn?.attachments ?? messageAttachments(message);
 
   const goToPapers = () => {
     if (onPickPaper) onPickPaper();
@@ -790,7 +914,19 @@ function ChatMessage({ message, turn, projectId, onRetry, onPickPaper }: ChatMes
   if (isUser) {
     return (
       <div className="chat-message-row user-row">
-        <div className="chat-bubble user-bubble">{content}</div>
+        <div className="user-message-stack">
+          {paperCard && (
+            <PaperReadingChip
+              paper={paperCard}
+              onClick={() => {
+                const session = turn?.sessionId ?? message?.session_id;
+                const search = session ? `?session=${encodeURIComponent(session)}` : '';
+                navigate(`/reading/${paperCard.id}${search}`);
+              }}
+            />
+          )}
+          <div className="chat-bubble user-bubble">{content}</div>
+        </div>
         <div className="chat-avatar">
           <div className="avatar-circle user-avatar-bg">
             <UserOutlined />
@@ -805,7 +941,13 @@ function ChatMessage({ message, turn, projectId, onRetry, onPickPaper }: ChatMes
     <div className="chat-message-row assistant-row">
       <div className="chat-avatar">
         <div className="avatar-circle assistant-avatar-bg">
-          <RobotOutlined />
+          {botAvatar?.startsWith('data:image/') ? (
+            <img className="custom-bot-avatar-image" src={botAvatar} alt="机器人头像" />
+          ) : botAvatar ? (
+            <span className="custom-bot-avatar">{botAvatar}</span>
+          ) : (
+            <RobotOutlined />
+          )}
         </div>
       </div>
       <div className="chat-bubble-group">
@@ -861,6 +1003,105 @@ function ChatMessage({ message, turn, projectId, onRetry, onPickPaper }: ChatMes
         )}
       </div>
     </div>
+  );
+}
+
+function messageAttachments(message?: Message): Attachment[] {
+  if (!message?.metadata || typeof message.metadata !== 'object') return [];
+  const attachments: Attachment[] = [];
+  if (message.metadata.search_results) {
+    attachments.push({
+      type: 'search_results',
+      data: message.metadata.search_results,
+    });
+  }
+  return attachments;
+}
+
+interface WorkspaceStatus {
+  text: string;
+  color: string;
+}
+
+function resolveWorkspaceStatus({
+  currentSessionStreaming,
+  turns,
+}: {
+  currentSessionStreaming: boolean;
+  turns: ChatTurn[];
+}): WorkspaceStatus {
+  if (!currentSessionStreaming) return { text: '空闲', color: '#52c41a' };
+  const liveMode =
+    [...turns].reverse().find((turn) => turn.pending && turn.mode)?.mode ??
+    [...turns].reverse().find((turn) => turn.mode)?.mode;
+  return workspaceGeneratingStatus(liveMode);
+}
+
+function workspaceGeneratingStatus(mode: ChatMode | string | undefined): WorkspaceStatus {
+  if (mode === 'framework_building') {
+    return { text: '框架搭建中', color: '#fa8c16' };
+  }
+  if (mode === 'topic_guidance') {
+    return { text: '选题指导中', color: '#2f54eb' };
+  }
+  if (mode === 'literature_discovery') {
+    return { text: '文献检索中', color: '#722ed1' };
+  }
+  if (mode === 'paper_reading') {
+    return { text: '文献解读中', color: '#13a8a8' };
+  }
+  return { text: '自由问答中', color: '#1677ff' };
+}
+
+interface MessagePaperCard {
+  id: string;
+  title: string;
+  arxivId?: string;
+}
+
+function resolveMessagePaperCard(
+  message?: Message,
+  turn?: ChatTurn,
+): MessagePaperCard | null {
+  if (turn?.paperId) {
+    return {
+      id: turn.paperId,
+      title: turn.paperTitle || turn.paperArxivId || '论文文档',
+      arxivId: turn.paperArxivId,
+    };
+  }
+  const metadata = message?.metadata;
+  const paperId =
+    typeof metadata?.paper_id === 'string' ? metadata.paper_id : undefined;
+  if (!paperId) return null;
+  const paperTitle =
+    typeof metadata?.paper_title === 'string' ? metadata.paper_title : undefined;
+  const arxivId =
+    typeof metadata?.paper_arxiv_id === 'string'
+      ? metadata.paper_arxiv_id
+      : undefined;
+  return {
+    id: paperId,
+    title: paperTitle || arxivId || '论文文档',
+    arxivId,
+  };
+}
+
+function PaperReadingChip({
+  paper,
+  onClick,
+}: {
+  paper: MessagePaperCard;
+  onClick: () => void;
+}) {
+  return (
+    <button className="paper-reading-chip" type="button" onClick={onClick}>
+      <FileSearchOutlined className="paper-reading-chip-icon" />
+      <span className="paper-reading-chip-text">
+        <span className="paper-reading-chip-title">{paper.title}</span>
+        <span className="paper-reading-chip-type">PDF</span>
+      </span>
+    </button>
   );
 }
 
@@ -1201,15 +1442,171 @@ function AttachmentView({ attachment, projectId }: { attachment: Attachment; pro
       />
     );
   }
-  const data = attachment.data as { paper_id: string; pages?: number[] };
+  if (attachment.type === 'framework_card_offer') {
+    return <FrameworkCardOffer data={attachment.data} />;
+  }
+  if (attachment.type === 'topic_guidance_card_offer') {
+    return <TopicGuidanceCardOffer data={attachment.data} />;
+  }
+  return null;
+}
+
+function TopicGuidanceCardOffer({
+  data,
+}: {
+  data: AttachmentTopicGuidanceCardOffer['data'];
+}) {
+  const { message: toast } = AntdApp.useApp();
+  const [creating, setCreating] = useState(false);
+  const [artifact, setArtifact] = useState<{
+    id: string;
+    title: string;
+    artifact_type: string;
+  } | null>(null);
+
+  const createCard = async () => {
+    if (creating || artifact) return;
+    setCreating(true);
+    try {
+      const created = await api.createTopicGuidanceCard({
+        project_id: data.project_id,
+        session_id: data.session_id,
+      });
+      setArtifact({
+        id: created.id,
+        title: created.title,
+        artifact_type: created.artifact_type,
+      });
+      toast.success('已整理为选题卡片');
+    } catch (err) {
+      toast.error((err as Error).message || '整理选题卡片失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (artifact) {
+    return (
+      <Alert
+        type="success"
+        showIcon
+        message={
+          <Space>
+            <span>已生成成果</span>
+            <Tag color="green">选题卡片</Tag>
+            <a
+              href={`/artifacts/${artifact.id}`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState({}, '', `/artifacts/${artifact.id}`);
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+            >
+              {artifact.title || '查看成果'} →
+            </a>
+          </Space>
+        }
+      />
+    );
+  }
+
   return (
     <Alert
       type="info"
       showIcon
       message={
-        <Space>
-          <FileSearchOutlined />
-          <span>引用了第 {data.pages?.join('、') || '—'} 页的内容</span>
+        <Space wrap>
+          <span>已识别到最终选题方案，可整理为研究项目成果。</span>
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckOutlined />}
+            loading={creating}
+            onClick={createCard}
+          >
+            {data.title || '整理为选题卡片'}
+          </Button>
+        </Space>
+      }
+    />
+  );
+}
+
+function FrameworkCardOffer({
+  data,
+}: {
+  data: AttachmentFrameworkCardOffer['data'];
+}) {
+  const { message: toast } = AntdApp.useApp();
+  const [creating, setCreating] = useState(false);
+  const [artifact, setArtifact] = useState<{
+    id: string;
+    title: string;
+    artifact_type: string;
+  } | null>(null);
+
+  const createCard = async () => {
+    if (creating || artifact) return;
+    setCreating(true);
+    try {
+      const created = await api.createFrameworkCard({
+        project_id: data.project_id,
+        session_id: data.session_id,
+      });
+      setArtifact({
+        id: created.id,
+        title: created.title,
+        artifact_type: created.artifact_type,
+      });
+      toast.success('已整理为框架卡片');
+    } catch (err) {
+      toast.error((err as Error).message || '整理框架卡片失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (artifact) {
+    return (
+      <Alert
+        type="success"
+        showIcon
+        message={
+          <Space>
+            <span>已生成成果</span>
+            <Tag color="green">框架卡片</Tag>
+            <a
+              href={`/artifacts/${artifact.id}`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState({}, '', `/artifacts/${artifact.id}`);
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+            >
+              {artifact.title || '查看成果'} →
+            </a>
+          </Space>
+        }
+      />
+    );
+  }
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message={
+        <Space wrap>
+          <span>已识别到最终方案，可整理为研究项目成果。</span>
+          <Button
+            type="primary"
+            size="small"
+            icon={<CheckOutlined />}
+            loading={creating}
+            onClick={createCard}
+          >
+            {data.title || '整理为框架卡片'}
+          </Button>
         </Space>
       }
     />
@@ -1254,6 +1651,23 @@ function ChatComposer({
   stages,
 }: ChatComposerProps) {
   const libraryPapers = papers.filter((paper) => paper.favorited || isUploaded(paper));
+  const libraryPaperOptions = libraryPapers.map((paper) => {
+    const label = `${paper.title} (${paper.arxiv_id})`;
+    return {
+      value: paper.id,
+      title: label,
+      label: (
+        <Space direction="vertical" size={0} style={{ maxWidth: 340 }}>
+          <Typography.Text ellipsis style={{ maxWidth: 340 }}>
+            {paper.title}
+          </Typography.Text>
+          <Typography.Text type="secondary" style={{ fontSize: 12 }}>
+            {paper.arxiv_id}
+          </Typography.Text>
+        </Space>
+      ),
+    };
+  });
   return (
     <div
       style={{
@@ -1274,12 +1688,17 @@ function ChatComposer({
             size="small"
             value={guidedPaperId ?? undefined}
             placeholder="从论文库选择要精读的论文"
-            style={{ minWidth: 260 }}
+            style={{ width: 360, maxWidth: 'min(360px, calc(100vw - 120px))' }}
+            popupMatchSelectWidth={360}
+            optionLabelProp="title"
+            showSearch
+            filterOption={(keyword, option) =>
+              String((option as { title?: string } | undefined)?.title ?? '')
+                .toLowerCase()
+                .includes(keyword.toLowerCase())
+            }
             onChange={onGuidedPaperChange}
-            options={libraryPapers.map((p) => ({
-              value: p.id,
-              label: `${p.title}（${p.arxiv_id}）`,
-            }))}
+            options={libraryPaperOptions}
             notFoundContent={
               <span style={{ fontSize: 12 }}>
                 当前项目还没有可精读论文，请先在"论文库"上传 PDF，或收藏检索结果后导入解析。
@@ -1294,7 +1713,7 @@ function ChatComposer({
         autoSize={{ minRows: 3, maxRows: 10 }}
         placeholder={
           forcePaperReading
-            ? '输入你的当前理解或直接说"开始精读"，系统会按研究问题、方法、贡献、局限逐步引导…'
+            ? '围绕右侧论文提问，或说“开始精读”，导师会用追问引导你回到原文证据…'
             : '描述你当前的研究问题或想探索的主题…'
         }
         maxLength={INPUT_MAX_LENGTH}
@@ -1348,28 +1767,28 @@ function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
     {
       title: '选题导师',
       icon: <ExperimentOutlined style={{ fontSize: 22, color: '#2b82f6' }} />,
-      text: '我想做机器学习可解释性方向的研究，请帮我找到具体可写的论文题目。',
+      text: '请根据我的情况帮我选题',
       tag: '选题',
       color: 'geekblue',
     },
     {
-      title: '文献查找',
-      icon: <SearchOutlined style={{ fontSize: 22, color: '#722ed1' }} />,
-      text: '请帮我检索关于「车辆路径优化」的最新论文。',
-      tag: '文献发现',
-      color: 'purple',
-    },
-    {
-      title: '论文框架搭建',
+      title: '框架搭建',
       icon: <BulbOutlined style={{ fontSize: 22, color: '#fa8c16' }} />,
-      text: '我已经确定题目为“基于强化学习的城市配送路径优化”，请帮我搭建论文框架。',
+      text: '帮我搭建论文框架',
       tag: '框架',
       color: 'orange',
     },
     {
-      title: '论文库精读',
+      title: '文献查找',
+      icon: <SearchOutlined style={{ fontSize: 22, color: '#722ed1' }} />,
+      text: '帮我检索相关论文',
+      tag: '文献发现',
+      color: 'purple',
+    },
+    {
+      title: '论文精读',
       icon: <ReadOutlined style={{ fontSize: 22, color: '#52c41a' }} />,
-      text: '请带我精读这篇论文，先定位研究问题，再梳理方法、贡献和局限。',
+      text: '帮我精读这篇论文',
       tag: '精读',
       color: 'green',
     },
@@ -1387,10 +1806,10 @@ function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
         <span style={{ fontSize: 32 }}>👋</span>
         <div>
           <Typography.Title level={4} style={{ margin: 0 }}>
-            开始你的第一次研究对话
+            开始你的研究之旅
           </Typography.Title>
           <Typography.Text type="secondary">
-            从以下推荐任务开始，或描述你的研究主题。
+            从以下功能开始，或直接描述你的研究主题。
           </Typography.Text>
         </div>
       </Space>
@@ -1446,4 +1865,5 @@ function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
   );
 }
 
-export type { Attachment, AttachmentArtifact, AttachmentEvidence, AttachmentSearchResults };
+
+export default ChatPage;
