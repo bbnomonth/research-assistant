@@ -64,6 +64,7 @@ coverage/
 
 # IDE and operating-system files
 .worktrees/
+.cursor/
 .idea/
 .vscode/
 .DS_Store

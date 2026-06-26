@@ -1,5 +1,5 @@
 from research_agent.repositories.conversations import ConversationRepository
-from research_agent.services.research_diagnosis import is_framework_final_plan
+from research_agent.services.framework_building import is_framework_final_plan
 from research_agent.services.topic_guidance import is_topic_guidance_final_plan
 
 

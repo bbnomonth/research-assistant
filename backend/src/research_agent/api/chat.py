@@ -11,7 +11,7 @@ from research_agent.schemas.chat import (
     TopicGuidanceCardRequest,
 )
 from research_agent.services.conversations import ConversationService
-from research_agent.services.research_diagnosis import (
+from research_agent.services.framework_building import (
     FrameworkBuilder,
     is_framework_final_plan,
     render_framework_card_markdown,

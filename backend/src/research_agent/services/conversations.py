@@ -22,7 +22,7 @@ from research_agent.services.topic_guidance import (
     TopicGuidanceService,
     is_topic_guidance_final_plan,
 )
-from research_agent.services.research_diagnosis import (
+from research_agent.services.framework_building import (
     FrameworkBuilder,
     is_framework_final_plan,
 )
