@@ -177,18 +177,75 @@ const compactComponents: Components = {
   ),
 };
 
+function normalizeMathExpression(expression: string): string {
+  return expression
+    .trim()
+    .replace(/^([_^])/, '{}$1')
+    .replace(/(?<!\\)\\[ \t]*\n/g, '\n');
+}
+
+function normalizeDollarMath(input: string): string {
+  let output = '';
+  let index = 0;
+
+  while (index < input.length) {
+    const start = input.indexOf('$', index);
+    if (start === -1) {
+      output += input.slice(index);
+      break;
+    }
+
+    output += input.slice(index, start);
+
+    if (input[start + 1] === '$') {
+      const end = input.indexOf('$$', start + 2);
+      if (end === -1) {
+        output += input.slice(start);
+        break;
+      }
+      const expression = normalizeMathExpression(input.slice(start + 2, end));
+      output += `\n\n$$\n${expression}\n$$\n\n`;
+      index = end + 2;
+      continue;
+    }
+
+    const end = input.indexOf('$', start + 1);
+    const expression = input.slice(start + 1, end === -1 ? input.length : end);
+    const likelyMath = /\\[A-Za-z]+|[_^{}=]/.test(expression);
+    const shouldPromoteToBlock =
+      likelyMath && (expression.includes('\n') || expression.length > 120);
+
+    if (end === -1) {
+      output += likelyMath
+        ? `\n\n$$\n${normalizeMathExpression(expression)}\n$$\n\n`
+        : input.slice(start);
+      break;
+    }
+
+    if (shouldPromoteToBlock) {
+      output += `\n\n$$\n${normalizeMathExpression(expression)}\n$$\n\n`;
+    } else {
+      output += `$${normalizeMathExpression(expression)}$`;
+    }
+    index = end + 1;
+  }
+
+  return output;
+}
+
 function normalizeMathMarkdown(input: string): string {
-  return input
+  const normalizedDelimiters = input
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, expression: string) => {
-      return `\n\n$$\n${expression.trim()}\n$$\n\n`;
+      return `\n\n$$\n${normalizeMathExpression(expression)}\n$$\n\n`;
     })
     .replace(/\\\(([\s\S]*?)\\\)/g, (_, expression: string) => {
-      return `$${expression.trim()}$`;
+      return `$${normalizeMathExpression(expression)}$`;
     })
     .replace(
       /(?<!\$)([A-Za-z][A-Za-z0-9_{}\\()[\].,\s+\-*/=<>|^]*\\[A-Za-z]+[A-Za-z0-9_{}\\()[\].,\s+\-*/=<>|^]*)\$/g,
-      (_, expression: string) => `$${expression.trim()}$`,
+      (_, expression: string) => `$${normalizeMathExpression(expression)}$`,
     );
+  return normalizeDollarMath(normalizedDelimiters);
 }
 
 export function MarkdownRenderer({ content, compact = false }: MarkdownRendererProps) {

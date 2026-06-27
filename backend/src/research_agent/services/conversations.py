@@ -70,35 +70,6 @@ def _papers_to_cache(result: LiteratureDiscoveryResult) -> list[RecommendedPaper
     return cached
 
 
-async def generate_session_title_from_model(
-    gateway: "ModelGateway",
-    content: str,
-) -> str:
-    """Use the LLM to extract a concise semantic title from the first message."""
-    prompt = (
-        "Given the following research question or statement, generate a concise Chinese title "
-        "for this conversation session. The title should be 8-15 Chinese characters, "
-        "accurately reflecting the core topic. Return ONLY the title text, no quotes, no explanation.\n\n"
-        f"User message: {content[:500]}"
-    )
-    try:
-        parts = [
-            token
-            async for token in gateway.stream_chat(
-                [{"role": "user", "content": prompt}]
-            )
-        ]
-        title = "".join(parts).strip()
-        title = title.strip("\"'，。、：；！？「」『』（）[]{}")
-        if not title or len(title) < 3:
-            return derive_session_title(content)
-        if len(title) > 20:
-            title = title[:19].rstrip() + "…"
-        return title
-    except Exception:
-        return derive_session_title(content)
-
-
 class ConversationService:
     def __init__(
         self,
@@ -171,13 +142,7 @@ class ConversationService:
         )
 
         if is_first_user_message and not conversation.title:
-            if self.model_gateway is not None:
-                conversation.title = await generate_session_title_from_model(
-                    self.model_gateway,
-                    content,
-                )
-            else:
-                conversation.title = derive_session_title(content)
+            conversation.title = derive_session_title(content)
 
         self.repository.touch_session(conversation.id)
         self.db.commit()

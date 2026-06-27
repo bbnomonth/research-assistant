@@ -72,6 +72,42 @@ def test_service_streams_safe_error_when_model_unavailable(tmp_path) -> None:
     assert events[-1].data["content"] == "你好吗"
 
 
+def test_first_message_does_not_block_on_model_title_generation(tmp_path) -> None:
+    class CountingGateway:
+        model_name = "fake"
+
+        def __init__(self) -> None:
+            self.prompts: list[str] = []
+
+        async def stream_chat(self, messages):
+            prompt = "\n".join(item.get("content", "") for item in messages)
+            self.prompts.append(prompt)
+            if "intent classifier" in prompt:
+                yield '{"mode":"other","confidence":0.9,"reasoning":"general question"}'
+                return
+            yield "answer"
+
+    database = Database(tmp_path / "test.sqlite3")
+    database.create_schema()
+    gateway = CountingGateway()
+
+    async def collect():
+        with database.session_factory() as db:
+            service = ConversationService(db=db, model_gateway=gateway)
+            return [
+                event
+                async for event in service.stream_reply(
+                    content="Explain a math model",
+                )
+            ]
+
+    events = asyncio.run(collect())
+
+    assert events[-1].data["content"] == "answer"
+    assert len(gateway.prompts) == 2
+    assert not any("generate a concise Chinese title" in item for item in gateway.prompts)
+
+
 def test_literature_failure_emits_safe_error_event(tmp_path) -> None:
     class FailingProvider:
         async def search(self, query):
