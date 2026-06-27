@@ -51,6 +51,7 @@ def _find_session_paper_id(messages) -> Optional[str]:
 @router.post("/stream")
 def stream_chat(payload: ChatRequest, request: Request):
     model_gateway = request.app.state.model_gateway
+    router_gateway = request.app.state.router_model_gateway
     privacy = request.app.state.privacy
     if model_gateway is None and not privacy["local_only"]:
         detail = (
@@ -65,6 +66,7 @@ def stream_chat(payload: ChatRequest, request: Request):
             service = ConversationService(
                 db=db,
                 model_gateway=model_gateway,
+                router_gateway=router_gateway,
                 arxiv_provider=request.app.state.arxiv_provider,
             )
             async for event in service.stream_reply(

@@ -1,5 +1,5 @@
 from collections.abc import AsyncIterator
-from typing import Dict, List, Protocol, Sequence
+from typing import Any, Dict, List, Optional, Protocol, Sequence
 
 from openai import AsyncOpenAI
 
@@ -63,9 +63,11 @@ class QwenOpenAIGateway:
         base_url: str,
         model_name: str,
         max_output_tokens: int = 2_048,
+        extra_body: Optional[Dict[str, Any]] = None,
     ) -> None:
         self.model_name = model_name
         self.max_output_tokens = max_output_tokens
+        self.extra_body = extra_body
         self._client = AsyncOpenAI(api_key=api_key, base_url=base_url)
 
     async def stream_chat(
@@ -75,11 +77,15 @@ class QwenOpenAIGateway:
         emitted = False
         for attempt in range(2):
             try:
+                kwargs: Dict[str, Any] = {}
+                if self.extra_body:
+                    kwargs["extra_body"] = self.extra_body
                 stream = await self._client.chat.completions.create(
                     model=self.model_name,
                     messages=messages,
                     max_tokens=self.max_output_tokens,
                     stream=True,
+                    **kwargs,
                 )
                 async for chunk in stream:
                     if not chunk.choices:

@@ -21,6 +21,10 @@ class Settings:
     qwen_api_key: Optional[str] = None
     qwen_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     qwen_model: str = "qwen3.7-plus"
+    router_api_key: Optional[str] = None
+    router_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    router_model: str = "deepseek-v4-flash"
+    router_disable_thinking: bool = True
     tesseract_executable: Optional[str] = None
     ocr_language: str = "chi_sim+eng"
     pdf_max_bytes: int = 10 * 1024 * 1024
@@ -41,6 +45,11 @@ class Settings:
     @property
     def model_configured(self) -> bool:
         candidate = (self.qwen_api_key or "").strip()
+        return candidate not in PLACEHOLDER_API_KEYS and not self.privacy_local_only
+
+    @property
+    def router_model_configured(self) -> bool:
+        candidate = (self.router_api_key or self.qwen_api_key or "").strip()
         return candidate not in PLACEHOLDER_API_KEYS and not self.privacy_local_only
 
     def _resolve(self, value: Path) -> Path:
@@ -67,6 +76,13 @@ class Settings:
                 "https://dashscope.aliyuncs.com/compatible-mode/v1",
             ),
             qwen_model=os.getenv("QWEN_MODEL", "qwen3.7-plus"),
+            router_api_key=os.getenv("ROUTER_API_KEY") or os.getenv("DASHSCOPE_API_KEY"),
+            router_base_url=os.getenv(
+                "ROUTER_BASE_URL",
+                os.getenv("QWEN_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+            ),
+            router_model=os.getenv("ROUTER_MODEL", "deepseek-v4-flash"),
+            router_disable_thinking=_bool_env("ROUTER_DISABLE_THINKING", True),
             tesseract_executable=os.getenv("TESSERACT_EXECUTABLE"),
             ocr_language=os.getenv("OCR_LANGUAGE", "chi_sim+eng"),
             cors_allowed_origins=_csv_env("CORS_ALLOWED_ORIGINS"),

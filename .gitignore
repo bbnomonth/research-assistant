@@ -38,6 +38,8 @@ temp/
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-tmp/
+.test-tmp/
 pytest-cache-files-*/
 backend/.pytest-tmp/
 backend/.pytest-tmp*/

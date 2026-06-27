@@ -29,6 +29,7 @@ from research_agent.services.privacy import cleanup_expired_conversations
 def create_app(
     settings: Optional[Settings] = None,
     model_gateway: Optional[ModelGateway] = None,
+    router_model_gateway: Optional[ModelGateway] = None,
     arxiv_provider: Optional[ArxivSearchProvider] = None,
     ocr_service: Optional[OcrService] = None,
     pdf_downloader: Optional[PdfDownloader] = None,
@@ -42,6 +43,19 @@ def create_app(
             api_key=active_settings.qwen_api_key or "",
             base_url=active_settings.qwen_base_url,
             model_name=active_settings.qwen_model,
+        )
+    if router_model_gateway is None and active_settings.router_model_configured:
+        router_extra_body = (
+            {"enable_thinking": False}
+            if active_settings.router_disable_thinking
+            else None
+        )
+        router_model_gateway = QwenOpenAIGateway(
+            api_key=active_settings.router_api_key or active_settings.qwen_api_key or "",
+            base_url=active_settings.router_base_url,
+            model_name=active_settings.router_model,
+            max_output_tokens=256,
+            extra_body=router_extra_body,
         )
     if arxiv_provider is None:
         arxiv_provider = LangChainArxivSearchProvider(max_results=20)
@@ -70,6 +84,10 @@ def create_app(
                 close = getattr(model_gateway, "aclose", None)
                 if close is not None:
                     await close()
+            if router_model_gateway is not None and router_model_gateway is not model_gateway:
+                close = getattr(router_model_gateway, "aclose", None)
+                if close is not None:
+                    await close()
             database.engine.dispose()
 
     app = FastAPI(
@@ -88,6 +106,7 @@ def create_app(
     app.state.settings = active_settings
     app.state.database = database
     app.state.model_gateway = model_gateway
+    app.state.router_model_gateway = router_model_gateway
     app.state.arxiv_provider = arxiv_provider
     app.state.ocr_service = ocr_service
     app.state.pdf_downloader = pdf_downloader

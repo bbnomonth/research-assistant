@@ -17,6 +17,7 @@ from research_agent.services.literature import (
 from research_agent.services.model_gateway import (
     ModelGateway,
     build_qwen_messages,
+    collect_chat,
 )
 from research_agent.services.topic_guidance import (
     TopicGuidanceService,
@@ -41,6 +42,52 @@ def derive_session_title(content: str, max_length: int = 24) -> str:
     if len(cleaned) > max_length:
         cleaned = cleaned[: max_length - 1].rstrip() + "…"
     return cleaned
+
+
+SESSION_TITLE_SYSTEM_PROMPT = """你是一个研究辅助系统的会话标题生成器。你的任务是根据用户的第一条有效输入，为当前会话生成一个简洁、准确的中文标题。
+
+要求：
+1. 标题应概括用户的核心任务或研究主题。
+2. 标题长度控制在 6 到 18 个汉字之间。
+3. 不要使用“关于”“讨论”“问题”等空泛词开头。
+4. 不要添加标点符号。
+5. 不要输出解释、推理过程、编号或 JSON。
+6. 如果用户输入是文献检索需求，标题应体现检索主题。
+7. 如果用户输入是论文框架或选题需求，标题应体现研究方向。
+8. 如果用户输入过短或含义不明确，生成一个保守标题，例如“自由问答”。
+
+请只输出最终标题。"""
+
+
+async def generate_session_title(
+    gateway: Optional[ModelGateway],
+    content: str,
+) -> str:
+    """Generate a concise session title with the fast model, falling back locally."""
+    fallback = derive_session_title(content)
+    if gateway is None:
+        return fallback
+    try:
+        title = await collect_chat(
+            gateway,
+            [
+                {"role": "system", "content": SESSION_TITLE_SYSTEM_PROMPT},
+                {"role": "user", "content": content[:1500]},
+            ],
+        )
+    except Exception:
+        return fallback
+    cleaned = _clean_generated_title(title)
+    return cleaned or fallback
+
+
+def _clean_generated_title(title: str) -> str:
+    cleaned = title.strip().strip("` \n\r\t。！？；;，,：:")
+    cleaned = " ".join(cleaned.split())
+    for prefix in ("标题：", "会话标题：", "最终标题："):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+    return cleaned[:24].strip()
 
 
 def _unique_evidence_pages(evidence) -> list[int]:
@@ -75,10 +122,12 @@ class ConversationService:
         self,
         db: Session,
         model_gateway: Optional[ModelGateway],
+        router_gateway: Optional[ModelGateway] = None,
         arxiv_provider: Optional[ArxivSearchProvider] = None,
     ) -> None:
         self.db = db
         self.model_gateway = model_gateway
+        self.router_gateway = router_gateway or model_gateway
         self.arxiv_provider = arxiv_provider
         self.repository = ConversationRepository(db)
 
@@ -94,8 +143,8 @@ class ConversationService:
         inherited = self._inherited_mode(history or [])
         if inherited is not None:
             return inherited
-        if self.model_gateway is not None:
-            classification = await classify_intent(self.model_gateway, content)
+        if self.router_gateway is not None:
+            classification = await classify_intent(self.router_gateway, content)
             return classification.mode
         return classify_by_keywords(content)
 
@@ -142,7 +191,10 @@ class ConversationService:
         )
 
         if is_first_user_message and not conversation.title:
-            conversation.title = derive_session_title(content)
+            conversation.title = await generate_session_title(
+                self.router_gateway,
+                content,
+            )
 
         self.repository.touch_session(conversation.id)
         self.db.commit()

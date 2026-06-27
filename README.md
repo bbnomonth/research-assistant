@@ -1,6 +1,6 @@
 # 研究能力训练助手
 
-面向研究新手的论文阅读与研究能力训练工具，课程演示版。后端 FastAPI + 前端 React 18 (Vite + Ant Design 5)，模型基于阿里云百炼 Qwen，文献检索走 arXiv，证据索引走 SQLite FTS5，扫描 PDF 走 Tesseract OCR 兜底。
+面向研究新手的论文阅读与研究能力训练工具，课程演示版。后端 FastAPI + 前端 React 18 (Vite + Ant Design 5)，主内容生成基于 OpenAI-compatible 模型网关，轻量意图分类和会话标题生成使用快速模型，文献检索走 arXiv，证据索引走 SQLite FTS5，扫描 PDF 走 Tesseract OCR 兜底。
 
 ## 系统架构
 
@@ -9,12 +9,12 @@
     ↓ HTTP / SSE
 FastAPI 后端（Python 3.9）
     ↓
-阿里云百炼 Qwen（流式对话）── LLM 意图分类 → 五种工作模式
+主模型（流式对话） + 快速模型（意图分类/会话标题） → 五种工作模式
     ↓
 arXiv（文献检索）+ SQLite FTS5（证据检索）+ PyMuPDF（文本解析）+ Tesseract OCR
 ```
 
-意图分类由 `services/intent_classifier.py` 完成：先调用 Qwen 判别模式，失败时回退到关键词匹配，确保模型不可用也不会阻塞用户。
+意图分类由 `services/intent_classifier.py` 完成：优先调用快速模型 `ROUTER_MODEL` 判别模式，失败时回退到关键词匹配，确保模型不可用也不会阻塞用户。主内容生成仍由 `QWEN_MODEL` 负责。
 
 ## 五种工作模式
 
@@ -205,7 +205,7 @@ SSE 主要事件包括 `mode` / `metadata` / `stage` / `search_results` / `evide
 
 ## 已知边界与注意
 
-- 意图分类默认走 Qwen，模型未配置 / 不可用时自动回退到关键词匹配（`OTHER` 模式）
+- 意图分类默认走 `ROUTER_MODEL` 快速模型，模型未配置 / 不可用时自动回退到关键词匹配（`OTHER` 模式）
 - 引导式精读不自动猜测目标论文，必须显式传入 `paper_id`，否则返回 `PAPER_READING_REQUIRES_PAPER`
 - 任务取消只对 `pending` / `processing` 状态生效；重试对 `failed` / `cancelled` / `interrupted` 生效
 - 论文导入 / 上传走 FastAPI 后台任务，前端应轮询 `/api/tasks/{id}` 拿结果

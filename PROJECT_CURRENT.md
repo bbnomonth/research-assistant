@@ -2,6 +2,14 @@
 
 本文档描述当前代码库的实际产品形态和维护边界，用于替代已删除的历史开发计划和旧设计草案。
 
+## 维护快照
+
+- 当前主产品是本地研究工作台，不再保留独立的“研究选题诊断”入口。
+- 对话意图分类和首条会话标题生成使用快速模型 `deepseek-v4-flash`，默认非思考模式。
+- 论文精读、论文框架搭建、选题指导、快速分析、论文对比和成果卡片整理仍使用主模型。
+- 搜索得到的文献只有被收藏或上传后才进入论文库。
+- 真实配置、数据库、上传 PDF、解析结果和用户成果均不进入版本控制。
+
 ## 产品定位
 
 研究能力训练助手是一个本地运行的研究工作台，面向研究新手，围绕“选题、检索、读文献、搭框架、沉淀成果”组织功能。
@@ -57,6 +65,31 @@ frontend/
 - 不提交 `backend/.env`、SQLite 数据库、上传论文、解析文本、日志和构建产物。
 - 不把真实 API Key 写入文档、测试、源码或聊天记录。
 - 删除文件前优先确认它们不是当前构建、测试或运行链路的一部分。
+- 不使用宽泛的 `git clean -fdX`，因为它会删除 `backend/.env`、`data/`、`frontend/node_modules/` 等本地必要内容。
+- 可以清理的内容仅限缓存和运行产物，例如 `__pycache__/`、`.pytest_cache/`、`.ruff_cache/`、`frontend/dist/`、后端 `_uvicorn.*.log`。
+
+## 模型配置
+
+主内容生成和轻量任务已经分离：
+
+- `QWEN_MODEL`：主模型，用于论文精读、论文框架搭建、选题指导、快速分析、论文对比和成果卡片整理。
+- `ROUTER_MODEL`：快速模型，默认 `deepseek-v4-flash`，用于意图分类和首条会话标题生成。
+- `ROUTER_DISABLE_THINKING=1`：快速模型默认关闭思考模式。
+
+推荐配置：
+
+```env
+DASHSCOPE_API_KEY=replace-with-your-api-key
+QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+QWEN_MODEL=qwen3.7-plus
+
+ROUTER_API_KEY=
+ROUTER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ROUTER_MODEL=deepseek-v4-flash
+ROUTER_DISABLE_THINKING=1
+```
+
+`ROUTER_API_KEY` 留空时复用 `DASHSCOPE_API_KEY`。
 
 ## 验证命令
 
