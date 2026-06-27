@@ -25,6 +25,7 @@ class Settings:
     ocr_language: str = "chi_sim+eng"
     pdf_max_bytes: int = 10 * 1024 * 1024
     pdf_max_pages: int = 60
+    cors_allowed_origins: tuple[str, ...] = ()
     privacy_pii_scrub: bool = False
     privacy_local_only: bool = False
     privacy_data_ttl_days: int = 0
@@ -68,6 +69,7 @@ class Settings:
             qwen_model=os.getenv("QWEN_MODEL", "qwen3.7-plus"),
             tesseract_executable=os.getenv("TESSERACT_EXECUTABLE"),
             ocr_language=os.getenv("OCR_LANGUAGE", "chi_sim+eng"),
+            cors_allowed_origins=_csv_env("CORS_ALLOWED_ORIGINS"),
             privacy_pii_scrub=_bool_env("PRIVACY_PII_SCRUB", False),
             privacy_local_only=_bool_env("PRIVACY_LOCAL_ONLY", False),
             privacy_data_ttl_days=int(os.getenv("PRIVACY_DATA_TTL_DAYS", "0") or 0),
@@ -79,3 +81,8 @@ def _bool_env(name: str, default: bool) -> bool:
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _csv_env(name: str) -> tuple[str, ...]:
+    raw = os.getenv(name, "")
+    return tuple(item.strip().rstrip("/") for item in raw.split(",") if item.strip())

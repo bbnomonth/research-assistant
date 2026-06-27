@@ -35,3 +35,21 @@ def test_settings_load_qwen_placeholders_from_env(
     assert settings.qwen_model == "qwen3.7-plus"
     assert settings.tesseract_executable == "C:/Tesseract/tesseract.exe"
     assert settings.ocr_language == "chi_sim+eng"
+
+
+def test_settings_load_cors_allowed_origins_from_env(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("APP_ROOT", str(tmp_path))
+    monkeypatch.setenv(
+        "CORS_ALLOWED_ORIGINS",
+        "https://example.netlify.app/, https://www.example.com",
+    )
+
+    settings = Settings.from_env()
+
+    assert settings.cors_allowed_origins == (
+        "https://example.netlify.app",
+        "https://www.example.com",
+    )

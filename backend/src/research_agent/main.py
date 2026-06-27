@@ -79,6 +79,7 @@ def create_app(
     )
     app.add_middleware(
         CORSMiddleware,
+        allow_origins=list(active_settings.cors_allowed_origins),
         allow_origin_regex=r"^http://(127\.0\.0\.1|localhost):\d+$",
         allow_credentials=False,
         allow_methods=["*"],
