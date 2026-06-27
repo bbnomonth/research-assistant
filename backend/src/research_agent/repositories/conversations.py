@@ -88,6 +88,20 @@ class ConversationRepository:
             )
         )
 
+    def create_project(
+        self,
+        name: Optional[str] = None,
+        profile: Optional[Dict[str, Any]] = None,
+    ) -> Project:
+        project = Project()
+        if name is not None and name.strip():
+            project.name = name.strip()
+        if profile is not None:
+            project.profile_json = json.dumps(profile, ensure_ascii=False)
+        self.db.add(project)
+        self.db.flush()
+        return project
+
     def get_project(self, project_id: str) -> Optional[Project]:
         return self.db.get(Project, project_id)
 

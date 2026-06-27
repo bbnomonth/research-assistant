@@ -17,6 +17,7 @@ from research_agent.schemas.projects import (
     MessageResponse,
     PaperListResponse,
     PaperSummary,
+    ProjectCreateRequest,
     ProjectListResponse,
     ProjectResponse,
     ProjectUpdateRequest,
@@ -39,6 +40,18 @@ def list_projects(request: Request):
                 ProjectResponse.from_model(project) for project in projects
             ]
         }
+
+
+@router.post("/projects", response_model=ProjectResponse)
+def create_project(payload: ProjectCreateRequest, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        project = ConversationRepository(db).create_project(
+            name=payload.name,
+            profile=payload.profile,
+        )
+        db.commit()
+        return ProjectResponse.from_model(project)
 
 
 @router.get("/projects/{project_id}", response_model=ProjectResponse)

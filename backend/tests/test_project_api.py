@@ -34,6 +34,21 @@ def test_project_api_lists_reads_and_renames_project(client) -> None:
     assert updated.json()["name"] == "Routing research"
 
 
+def test_project_api_creates_empty_project(client) -> None:
+    created = client.post("/api/projects", json={"name": "New research project"})
+
+    assert created.status_code == 200
+    project_id = created.json()["id"]
+    assert created.json()["name"] == "New research project"
+
+    listing = client.get("/api/projects")
+    sessions = client.get(f"/api/projects/{project_id}/sessions")
+
+    assert any(item["id"] == project_id for item in listing.json()["projects"])
+    assert sessions.status_code == 200
+    assert sessions.json()["sessions"] == []
+
+
 def test_project_api_returns_sessions_and_ordered_messages(client) -> None:
     project_id, session_id = _seed_project(client)
 

@@ -25,6 +25,21 @@ class ReadingGateway:
         yield "你已经识别出研究对象，但还需要回到第 2 页确认方法证据：作者具体使用了什么方法来处理车辆路径问题？"
 
 
+class FinalSummaryGateway:
+    model_name = "fake"
+
+    async def stream_chat(self, messages):
+        del messages
+        yield (
+            "Final summary: this paper studies vehicle routing. "
+            "Research question: how to improve routing decisions. "
+            "Method: learning-guided optimization. "
+            "Evidence: method evidence appears on page 2. "
+            "Contribution: it connects learning and routing. "
+            "Limitation: more validation is still needed."
+        )
+
+
 def _create_paper_with_evidence(db):
     project, session = ConversationRepository(db).ensure_conversation(None, None)
     paper = PaperRepository(db).upsert_arxiv_papers(
@@ -132,6 +147,25 @@ def test_guided_reading_rejects_paper_from_another_project(tmp_path) -> None:
             )
 
         assert project.id != other_project.id
+
+
+def test_guided_reading_marks_final_summary_text_as_completed(tmp_path) -> None:
+    database = Database(tmp_path / "test.sqlite3")
+    database.create_schema()
+
+    with database.session_factory() as db:
+        project, _, paper, _ = _create_paper_with_evidence(db)
+        result = asyncio.run(
+            GuidedReadingService(db, FinalSummaryGateway()).guide(
+                project_id=project.id,
+                paper_id=paper.id,
+                user_input="Please give the final explanation.",
+                history=[],
+            )
+        )
+
+    assert result.turn.completed is True
+    assert result.artifact is None
 
 
 def test_guided_reading_rejects_paper_without_evidence(tmp_path) -> None:

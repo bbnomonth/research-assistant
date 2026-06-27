@@ -43,7 +43,6 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
     query?: unknown;
     candidates?: unknown[];
     recommendations?: unknown[];
-    candidate_summaries?: Record<string, unknown>;
   };
   const candidates = getArr(payload.candidates);
   const recommendations = getArr(payload.recommendations);
@@ -115,10 +114,7 @@ export function SearchResults({ data, activeProjectId }: SearchResultsProps) {
           .map((c: unknown, idx: number) => {
             const paper = c as PaperLike;
             const candidateLabels = buildCandidateLabels(paper);
-            const candidateSummary = buildCandidateSummary(
-              paper,
-              getStr(payload.candidate_summaries?.[getStr(paper.arxiv_id)]),
-            );
+            const candidateSummary = buildCandidateSummary(paper);
             return (
               <PaperCard
                 key={idx}
@@ -173,17 +169,13 @@ function buildCandidateLabels(paper: PaperLike): string[] {
   return labels;
 }
 
-function buildCandidateSummary(paper: PaperLike, backendSummary: string): string {
+function buildCandidateSummary(paper: PaperLike): string {
   const labels = buildCandidateLabels(paper).filter((label) => label !== '候选文献');
   const year = extractYear(getStr((paper as { published?: unknown }).published));
   const focus = labels.length
     ? labels.slice(0, 2).join('、')
     : inferTitleFocus(getStr(paper.title));
   const yearText = year ? `，属于${year}年的相关研究` : '';
-  const backendHint = compactBackendSummary(backendSummary);
-  if (backendHint) {
-    return `该文献围绕${focus}展开${yearText}，可作为候选文献进一步核对；摘要提示：${backendHint}`;
-  }
   return `该文献围绕${focus}展开${yearText}，可作为理解相关方法、应用场景或研究背景的候选文献。`;
 }
 
@@ -200,15 +192,6 @@ function inferTitleFocus(title: string): string {
     .slice(0, 4)
     .join(' ');
   return cleaned ? `“${cleaned}”相关问题` : '当前检索主题';
-}
-
-function compactBackendSummary(summary: string): string {
-  const cleaned = summary
-    .replace(/^该文献主要关注[:：]\s*/u, '')
-    .replace(/^该文献与当前检索主题相关[，,]\s*/u, '')
-    .trim();
-  if (!cleaned || cleaned === summary.trim()) return '';
-  return cleaned.length > 200 ? `${cleaned.slice(0, 197).trim()}...` : cleaned;
 }
 
 function PaperCard(props: {

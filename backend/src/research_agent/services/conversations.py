@@ -107,10 +107,7 @@ def _papers_to_cache(result: LiteratureDiscoveryResult) -> list[RecommendedPaper
         cached.append(
             RecommendedPaper(
                 paper=paper,
-                reason=result.candidate_summaries.get(
-                    paper.arxiv_id,
-                    "该文献与当前检索主题相关，建议进一步查看摘要。",
-                ),
+                reason="该文献与当前检索主题相关，建议进一步查看原文并核对方法、场景和结论。",
                 purpose_labels=["候选文献"],
             )
         )
@@ -637,6 +634,7 @@ class ConversationService:
                     "evidence_pages": _unique_evidence_pages(evidence),
                 },
             )
+        yield StreamEvent(event="done", data={"content": response})
         if turn.completed:
             yield StreamEvent(
                 event="guided_reading_card_offer",
@@ -647,7 +645,6 @@ class ConversationService:
                     "title": "整理为精读卡片",
                 },
             )
-        yield StreamEvent(event="done", data={"content": response})
 
     def _paper_message_metadata(self, paper_id: Optional[str]) -> dict:
         if not paper_id:

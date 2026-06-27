@@ -61,6 +61,7 @@ export function AppShell() {
   const [projectName, setProjectName] = useState('');
   const [projectProfile, setProjectProfile] = useState('{}');
   const [savingProject, setSavingProject] = useState(false);
+  const [creatingProject, setCreatingProject] = useState(false);
   const previousHealthRef = useRef<boolean | null>(null);
 
   const refreshAll = async (silent = false) => {
@@ -131,6 +132,22 @@ export function AppShell() {
     setActiveProjectId(id);
     if (location.pathname !== '/chat') {
       navigate('/chat');
+    }
+  };
+
+  const createProjectAndEnterChat = async () => {
+    if (creatingProject) return;
+    setCreatingProject(true);
+    try {
+      const project = await api.createProject({});
+      upsertProject(project);
+      setActiveProjectId(project.id);
+      navigate('/chat');
+      antMessage.success('已创建新项目');
+    } catch (err) {
+      antMessage.error((err as Error).message || '创建项目失败');
+    } finally {
+      setCreatingProject(false);
     }
   };
 
@@ -240,23 +257,17 @@ export function AppShell() {
             type="secondary"
             style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}
           >
-            首次提问将自动创建默认项目。
+            创建项目后进入对话工作台。
           </Typography.Paragraph>
           <Button
             block
             type="dashed"
             icon={<PlusOutlined />}
+            loading={creatingProject}
             style={{ marginTop: 8 }}
-            onClick={() => {
-              if (projects.length > 0) {
-                setActiveProjectId(projects[0].id);
-                navigate('/chat');
-              } else {
-                navigate('/chat');
-              }
-            }}
+            onClick={() => void createProjectAndEnterChat()}
           >
-            进入对话工作台
+            创建新项目
           </Button>
         </div>
         <Menu

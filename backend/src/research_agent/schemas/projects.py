@@ -18,6 +18,11 @@ class ProjectUpdateRequest(BaseModel):
         return self
 
 
+class ProjectCreateRequest(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=200)
+    profile: Optional[Dict[str, Any]] = None
+
+
 class ProjectResponse(BaseModel):
     id: str
     name: str

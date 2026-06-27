@@ -15,6 +15,7 @@ import type {
   PaperComparisonRequest,
   PaperComparisonResponse,
   Project,
+  ProjectCreateRequest,
   ProjectUpdateRequest,
   QuickAnalysisResponse,
   RuntimeSettings,
@@ -214,6 +215,11 @@ export const api = {
   health: () => request<HealthResponse>('/api/health'),
 
   listProjects: () => request<{ projects: Project[] }>('/api/projects'),
+  createProject: (body: ProjectCreateRequest = {}) =>
+    request<Project>('/api/projects', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
   getProject: (id: string) => request<Project>(`/api/projects/${id}`),
   updateProject: (id: string, body: ProjectUpdateRequest) =>
     request<Project>(`/api/projects/${id}`, {

@@ -1,4 +1,4 @@
-from typing import Dict, List
+from typing import List
 
 from pydantic import BaseModel, Field
 
@@ -34,4 +34,3 @@ class LiteratureDiscoveryResult(BaseModel):
     query: str
     candidates: List[ArxivPaper]
     recommendations: List[RecommendedPaper]
-    candidate_summaries: Dict[str, str] = Field(default_factory=dict)

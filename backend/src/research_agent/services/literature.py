@@ -40,10 +40,6 @@ class LiteratureDiscoveryService:
             query=query,
             candidates=candidates,
             recommendations=recommendations,
-            candidate_summaries={
-                paper.arxiv_id: _candidate_summary(paper.abstract)
-                for paper in candidates
-            },
         )
 
     async def discover_with_artifact(
@@ -307,24 +303,4 @@ class LocalLiteratureDiscoveryService:
             query=query,
             candidates=candidates,
             recommendations=recommendations,
-            candidate_summaries={
-                paper.arxiv_id: _candidate_summary(paper.abstract)
-                for paper in candidates
-            },
         )
-
-
-def _candidate_summary(abstract: str) -> str:
-    text = " ".join((abstract or "").split())
-    if not text:
-        return "该文献与当前检索主题相关，建议进一步查看原文。"
-    sentence_end = min(
-        [idx for idx in (text.find("."), text.find("。")) if idx != -1]
-        or [160]
-    )
-    summary = text[: sentence_end + 1].strip()
-    if len(summary) > 180:
-        summary = summary[:177].rstrip() + "..."
-    if not summary:
-        return "该文献与当前检索主题相关，建议进一步查看原文。"
-    return f"该文献主要关注：{summary}"

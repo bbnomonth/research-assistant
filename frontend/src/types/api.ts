@@ -34,6 +34,8 @@ export interface ProjectUpdateRequest {
   profile?: Record<string, unknown>;
 }
 
+export type ProjectCreateRequest = ProjectUpdateRequest;
+
 export interface SessionUpdateRequest {
   title?: string;
 }
@@ -227,7 +229,6 @@ export interface LiteratureDiscoveryResult {
   query: string;
   candidates: ArxivPaper[];
   recommendations: RecommendedPaper[];
-  candidate_summaries?: Record<string, string>;
 }
 
 export type StreamEventName =
