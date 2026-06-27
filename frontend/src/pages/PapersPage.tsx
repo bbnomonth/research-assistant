@@ -25,6 +25,7 @@ import {
   CloudUploadOutlined,
   DownloadOutlined,
   ExperimentOutlined,
+  FilePdfOutlined,
   FileSearchOutlined,
   ReloadOutlined,
   RobotOutlined,
@@ -403,6 +404,13 @@ export function PapersPage() {
                 selected={compareIds.includes(paper.id)}
                 onToggleCompare={() => toggleCompare(paper.id)}
                 onImport={() => handleImportArxiv(paper)}
+                onOpenPdf={() =>
+                  window.open(
+                    api.paperPdfUrl(paper.id),
+                    '_blank',
+                    'noopener,noreferrer',
+                  )
+                }
                 onQuickAnalyze={() => handleQuickAnalysis(paper)}
                 onFavoriteToggle={(favorited) =>
                   void handleFavoriteToggle(paper, favorited)
@@ -424,6 +432,7 @@ function PaperItem({
   selected,
   onToggleCompare,
   onImport,
+  onOpenPdf,
   onQuickAnalyze,
   onFavoriteToggle,
   onCancelTask,
@@ -434,6 +443,7 @@ function PaperItem({
   selected: boolean;
   onToggleCompare: () => void;
   onImport: () => void;
+  onOpenPdf: () => void;
   onQuickAnalyze: () => void;
   onFavoriteToggle: (favorited: boolean) => void;
   onCancelTask: (task: TaskRecord) => void;
@@ -598,6 +608,9 @@ function PaperItem({
               导入 PDF
             </Button>
           )}
+          <Button size="small" icon={<FilePdfOutlined />} onClick={onOpenPdf}>
+            打开 PDF
+          </Button>
           <Button size="small" icon={<RobotOutlined />} onClick={onQuickAnalyze}>
             快速分析
           </Button>

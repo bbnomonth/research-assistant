@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import fitz
 
 from research_agent.repositories.conversations import ConversationRepository
@@ -236,6 +238,14 @@ def test_import_arxiv_pdf_creates_completed_task(client) -> None:
     task = client.get(f"/api/tasks/{response.json()['task']['id']}")
     assert task.status_code == 200
     assert task.json()["status"] == "completed"
+    detail = client.get(f"/api/papers/{paper.id}")
+    assert detail.status_code == 200
+    stored_path = Path(detail.json()["pdf_url"])
+    assert stored_path.parent == client.app.state.settings.resolved_upload_dir
+    assert stored_path.exists()
+    pdf = client.get(f"/api/papers/{paper.id}/pdf")
+    assert pdf.status_code == 200
+    assert pdf.content.startswith(b"%PDF-")
     search = client.get(
         f"/api/papers/{paper.id}/evidence",
         params={"q": "downloaded"},
