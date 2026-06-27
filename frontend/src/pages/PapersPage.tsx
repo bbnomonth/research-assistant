@@ -170,6 +170,21 @@ export function PapersPage() {
     }
   };
 
+  const hasActivePaperTask = (paperId: string) =>
+    Object.values(taskMap).some(
+      (task) =>
+        task.paper_id === paperId &&
+        (task.status === 'pending' || task.status === 'processing'),
+    );
+
+  const handlePdfAction = async (paper: Paper) => {
+    const importable = !isUploaded(paper) && paper.pdf_url.startsWith('http');
+    if (importable && !hasActivePaperTask(paper.id)) {
+      await handleImportArxiv(paper);
+    }
+    window.open(api.paperPdfUrl(paper.id), '_blank', 'noopener,noreferrer');
+  };
+
   const handleQuickAnalysis = async (paper: Paper) => {
     try {
       const res = await api.quickAnalysis(paper.id);
@@ -403,14 +418,7 @@ export function PapersPage() {
                 taskMap={taskMap}
                 selected={compareIds.includes(paper.id)}
                 onToggleCompare={() => toggleCompare(paper.id)}
-                onImport={() => handleImportArxiv(paper)}
-                onOpenPdf={() =>
-                  window.open(
-                    api.paperPdfUrl(paper.id),
-                    '_blank',
-                    'noopener,noreferrer',
-                  )
-                }
+                onPdfAction={() => void handlePdfAction(paper)}
                 onQuickAnalyze={() => handleQuickAnalysis(paper)}
                 onFavoriteToggle={(favorited) =>
                   void handleFavoriteToggle(paper, favorited)
@@ -431,8 +439,7 @@ function PaperItem({
   taskMap,
   selected,
   onToggleCompare,
-  onImport,
-  onOpenPdf,
+  onPdfAction,
   onQuickAnalyze,
   onFavoriteToggle,
   onCancelTask,
@@ -442,8 +449,7 @@ function PaperItem({
   taskMap: Record<string, TaskRecord>;
   selected: boolean;
   onToggleCompare: () => void;
-  onImport: () => void;
-  onOpenPdf: () => void;
+  onPdfAction: () => void;
   onQuickAnalyze: () => void;
   onFavoriteToggle: (favorited: boolean) => void;
   onCancelTask: (task: TaskRecord) => void;
@@ -599,18 +605,15 @@ function PaperItem({
           )}
         </div>
         <Space wrap style={{ marginLeft: 16 }}>
-          {isImportable && (
+          <Tooltip title={isImportable ? '导入 PDF 到论文库并打开' : '打开 PDF'}>
             <Button
               size="small"
-              icon={<DownloadOutlined />}
-              onClick={onImport}
+              icon={isImportable ? <DownloadOutlined /> : <FilePdfOutlined />}
+              onClick={onPdfAction}
             >
-              导入 PDF
+              PDF
             </Button>
-          )}
-          <Button size="small" icon={<FilePdfOutlined />} onClick={onOpenPdf}>
-            打开 PDF
-          </Button>
+          </Tooltip>
           <Button size="small" icon={<RobotOutlined />} onClick={onQuickAnalyze}>
             快速分析
           </Button>

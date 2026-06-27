@@ -45,6 +45,7 @@ export function ArtifactDetailPage() {
   const [artifact, setArtifact] = useState<Artifact | null>(null);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState(false);
+  const [activeTab, setActiveTab] = useState('preview');
   const [titleDraft, setTitleDraft] = useState('');
   const [markdownDraft, setMarkdownDraft] = useState('');
   const [saving, setSaving] = useState(false);
@@ -78,6 +79,7 @@ export function ArtifactDetailPage() {
       });
       setArtifact(res);
       setEditing(false);
+      setActiveTab('preview');
       toast.success('保存成功');
     } catch (err) {
       toast.error((err as Error).message);
@@ -198,7 +200,14 @@ export function ArtifactDetailPage() {
             >
               保存
             </Button>
-            <Button onClick={() => setEditing(false)}>取消</Button>
+            <Button
+              onClick={() => {
+                setEditing(false);
+                setActiveTab('preview');
+              }}
+            >
+              取消
+            </Button>
           </Space>
         </Space>
       ),
@@ -221,7 +230,13 @@ export function ArtifactDetailPage() {
       extra={
         <Space>
           {!editing && (
-            <Button icon={<EditOutlined />} onClick={() => setEditing(true)}>
+            <Button
+              icon={<EditOutlined />}
+              onClick={() => {
+                setEditing(true);
+                setActiveTab('edit');
+              }}
+            >
               编辑
             </Button>
           )}
@@ -244,7 +259,7 @@ export function ArtifactDetailPage() {
         </Descriptions.Item>
       </Descriptions>
       <Divider style={{ margin: '12px 0' }} />
-      <Tabs items={tabItems} />
+      <Tabs activeKey={activeTab} items={tabItems} onChange={setActiveTab} />
     </Card>
   );
 }
