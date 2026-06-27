@@ -218,6 +218,8 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(body),
     }),
+  deleteProject: (id: string) =>
+    request<void>(`/api/projects/${id}`, { method: 'DELETE' }),
   listProjectSessions: (id: string) =>
     request<{ sessions: Session[] }>(`/api/projects/${id}/sessions`),
   listProjectPapers: (id: string) =>

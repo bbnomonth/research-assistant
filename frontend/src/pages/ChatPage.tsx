@@ -1781,7 +1781,7 @@ function WelcomeCard({ onTemplate }: { onTemplate: (text: string) => void }) {
     {
       title: '文献查找',
       icon: <SearchOutlined style={{ fontSize: 22, color: '#722ed1' }} />,
-      text: '帮我检索相关论文',
+      text: '帮我检索[启发式算法]相关论文',
       tag: '文献发现',
       color: 'purple',
     },

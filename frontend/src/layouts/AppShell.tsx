@@ -11,6 +11,7 @@ import {
   Empty,
   Input,
   Modal,
+  Popconfirm,
   Spin,
   App as AntApp,
 } from 'antd';
@@ -22,6 +23,7 @@ import {
   ReloadOutlined,
   PlusOutlined,
   EditOutlined,
+  DeleteOutlined,
 } from '@ant-design/icons';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
@@ -47,6 +49,7 @@ export function AppShell() {
     projects,
     setProjects,
     upsertProject,
+    removeProject,
     activeProjectId,
     setActiveProjectId,
     settings,
@@ -168,6 +171,18 @@ export function AppShell() {
     }
   };
 
+  const deleteActiveProject = async () => {
+    if (!activeProject) return;
+    try {
+      await api.deleteProject(activeProject.id);
+      removeProject(activeProject.id);
+      antMessage.success('项目已删除');
+      navigate('/chat');
+    } catch (err) {
+      antMessage.error((err as Error).message);
+    }
+  };
+
   const menuKey = location.pathname.split('/').filter(Boolean)[0] ?? 'chat';
 
   return (
@@ -204,6 +219,22 @@ export function AppShell() {
               disabled={!activeProject}
               title="编辑当前项目"
             />
+            <Popconfirm
+              title="删除当前项目？"
+              description="项目下的会话、论文库和成果卡片会一并删除。"
+              okText="删除"
+              okButtonProps={{ danger: true }}
+              cancelText="取消"
+              onConfirm={() => void deleteActiveProject()}
+              disabled={!activeProject}
+            >
+              <Button
+                danger
+                icon={<DeleteOutlined />}
+                disabled={!activeProject}
+                title="删除当前项目"
+              />
+            </Popconfirm>
           </Space.Compact>
           <Typography.Paragraph
             type="secondary"

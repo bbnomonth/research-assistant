@@ -57,6 +57,7 @@ interface AppState {
   projects: Project[];
   setProjects: (items: Project[]) => void;
   upsertProject: (item: Project) => void;
+  removeProject: (id: string) => void;
 
   activeProjectId: string | null;
   setActiveProjectId: (id: string | null) => void;
@@ -117,6 +118,23 @@ export const useAppStore = create<AppState>((set) => ({
       }
       next.sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
       return { projects: next };
+    }),
+  removeProject: (id) =>
+    set((state) => {
+      const projects = state.projects.filter((project) => project.id !== id);
+      const sessionsByProject = { ...state.sessionsByProject };
+      const artifactsByProject = { ...state.artifactsByProject };
+      delete sessionsByProject[id];
+      delete artifactsByProject[id];
+      return {
+        projects,
+        activeProjectId:
+          state.activeProjectId === id ? projects[0]?.id ?? null : state.activeProjectId,
+        sessionsByProject,
+        artifactsByProject,
+        papers: state.activeProjectId === id ? [] : state.papers,
+        activePaperId: state.activeProjectId === id ? null : state.activePaperId,
+      };
     }),
 
   activeProjectId: null,

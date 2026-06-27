@@ -1,6 +1,15 @@
 from fastapi import APIRouter, HTTPException, Request
+from sqlalchemy import text
 
-from research_agent.db.models import Message
+from research_agent.db.models import (
+    Artifact,
+    ConversationSession,
+    Message,
+    Paper,
+    PaperChunk,
+    Project,
+    Task,
+)
 from research_agent.repositories.conversations import ConversationRepository
 from research_agent.repositories.papers import PaperRepository
 from research_agent.schemas.projects import (
@@ -60,6 +69,59 @@ def update_project(
             raise HTTPException(status_code=404, detail=str(exc)) from exc
         db.commit()
         return ProjectResponse.from_model(project)
+
+
+@router.delete("/projects/{project_id}", status_code=204)
+def delete_project(project_id: str, request: Request):
+    database = request.app.state.database
+    with database.session_factory() as db:
+        repository = ConversationRepository(db)
+        project = repository.get_project(project_id)
+        if project is None:
+            raise HTTPException(status_code=404, detail="project not found")
+
+        session_ids = [
+            row[0]
+            for row in db.query(ConversationSession.id)
+            .filter(ConversationSession.project_id == project_id)
+            .all()
+        ]
+        if session_ids:
+            db.query(Message).filter(Message.session_id.in_(session_ids)).delete(
+                synchronize_session=False,
+            )
+
+        paper_ids = [
+            row[0]
+            for row in db.query(Paper.id).filter(Paper.project_id == project_id).all()
+        ]
+        for paper_id in paper_ids:
+            db.execute(
+                text("DELETE FROM paper_chunks_fts WHERE paper_id = :paper_id"),
+                {"paper_id": paper_id},
+            )
+        if paper_ids:
+            db.query(Task).filter(Task.paper_id.in_(paper_ids)).delete(
+                synchronize_session=False,
+            )
+            db.query(PaperChunk).filter(PaperChunk.paper_id.in_(paper_ids)).delete(
+                synchronize_session=False,
+            )
+            db.query(Paper).filter(Paper.id.in_(paper_ids)).delete(
+                synchronize_session=False,
+            )
+
+        db.query(Artifact).filter(Artifact.project_id == project_id).delete(
+            synchronize_session=False,
+        )
+        db.query(ConversationSession).filter(
+            ConversationSession.project_id == project_id,
+        ).delete(synchronize_session=False)
+        db.query(Project).filter(Project.id == project_id).delete(
+            synchronize_session=False,
+        )
+        db.commit()
+    return None
 
 
 @router.get(
