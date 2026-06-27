@@ -22,11 +22,12 @@ import {
   BulbOutlined,
   DeleteOutlined,
   ExperimentOutlined,
+  LinkOutlined,
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { api } from '@/api/client';
 import { useAppStore } from '@/store/app';
-import type { ArtifactSummary } from '@/types/api';
+import type { ArtifactSourceLink, ArtifactSummary } from '@/types/api';
 
 const ARTIFACT_TYPE_CONFIG: Record<
   string,
@@ -81,7 +82,7 @@ function formatDate(iso: string): string {
 export function ArtifactsPage() {
   const navigate = useNavigate();
   const { message: toast } = AntdApp.useApp();
-  const { activeProjectId, projects } = useAppStore();
+  const { activeProjectId, projects, setActiveProjectId } = useAppStore();
   const [artifacts, setArtifacts] = useState<ArtifactSummary[]>([]);
   const [loading, setLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -157,6 +158,37 @@ export function ArtifactsPage() {
       }
       return next;
     });
+  };
+
+  const handleOpenSource = async (source: ArtifactSourceLink) => {
+    const projectId = source.project_id ?? activeProjectId;
+    if (source.source_type === 'session') {
+      try {
+        await api.listSessionMessages(source.target_id);
+        if (projectId) setActiveProjectId(projectId);
+        navigate(
+          `/chat?project=${encodeURIComponent(projectId ?? '')}&session=${encodeURIComponent(
+            source.target_id,
+          )}`,
+        );
+      } catch {
+        toast.warning('来源对话不存在或已被删除');
+      }
+      return;
+    }
+
+    if (source.source_type === 'paper') {
+      try {
+        const paper = await api.getPaper(source.target_id);
+        setActiveProjectId(paper.project_id);
+        navigate(`/papers?paper=${encodeURIComponent(source.target_id)}`);
+      } catch {
+        toast.warning('来源论文不存在或已被移出论文库');
+      }
+      return;
+    }
+
+    toast.info('该成果没有可跳转的来源');
   };
 
   const allSelected = artifacts.length > 0 && selectedIds.size === artifacts.length;
@@ -332,6 +364,16 @@ export function ArtifactsPage() {
                     </Space>
                   </div>
                   <Space size={4} onClick={(e) => e.stopPropagation()}>
+                    {(artifact.source_links ?? []).map((source) => (
+                      <Button
+                        key={`${source.source_type}-${source.target_id}`}
+                        type="text"
+                        icon={<LinkOutlined />}
+                        onClick={() => void handleOpenSource(source)}
+                      >
+                        {source.label}
+                      </Button>
+                    ))}
                     <Button
                       type="text"
                       icon={<ReadOutlined />}

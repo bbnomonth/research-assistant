@@ -1,6 +1,6 @@
-# 云部署说明
+# 环境部署说明
 
-本项目建议采用前后端分离部署：
+本文档用于在其它电脑本地部署演示，也保留可选云部署说明。项目采用前后端分离结构：
 
 - Netlify：部署 `frontend` 静态前端。
 - Python 后端平台：部署 `backend` FastAPI 服务，例如 Render、Railway、Fly.io、VPS 或云服务器。
@@ -8,7 +8,56 @@
 
 不要把真实 API Key、`.env`、数据库、上传论文或日志提交到 Git。
 
-## 1. 部署前检查
+## 1. 运行环境
+
+- Python：`>=3.9,<3.13`，推荐 3.9 或 3.11。Python 3.13+ 不兼容当前后端依赖。
+- Node.js：18+，当前项目在本机 Node 24 环境下可运行。
+- OCR：可选安装 Tesseract；普通文本 PDF 不依赖 OCR，扫描版 PDF 建议配置。
+- 模型：需要阿里云百炼兼容 OpenAI API 的 Key，写入 `backend/.env`，不要提交。
+
+## 2. 其它电脑本地部署
+
+在目标电脑安装 Git、Python、Node.js 后执行：
+
+```powershell
+git clone <your-repo-url>
+cd 人因工程
+```
+
+后端配置：
+
+```powershell
+Copy-Item backend\.env.example backend\.env
+# 编辑 backend\.env，填写 DASHSCOPE_API_KEY。
+# 如安装了 Tesseract，填写 TESSERACT_EXECUTABLE。
+```
+
+安装依赖：
+
+```powershell
+& '<你的 Python 路径>\python.exe' -m pip install -e "backend[test]"
+
+cd frontend
+npm install
+cd ..
+```
+
+启动服务：
+
+```powershell
+# 终端 1：后端
+& '<你的 Python 路径>\python.exe' -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
+
+# 终端 2：前端
+cd frontend
+npm run dev
+```
+
+浏览器访问 `http://127.0.0.1:5173`。后端接口文档在 `http://127.0.0.1:8000/docs`。
+
+Windows 本机也可以直接双击 `dev-start.bat`，但需要先确认脚本中的默认 Python 路径存在，或在启动前设置 `PYTHON_EXE`。
+
+## 3. 本地验证
 
 在本地确认构建和测试通过：
 
@@ -23,7 +72,7 @@ npm run build
 
 当前 Git 分支需要先推送到 GitHub，或者合并到 Netlify 绑定的生产分支。
 
-## 2. Netlify 前端配置
+## 4. Netlify 前端配置
 
 仓库根目录已经提供 `netlify.toml`：
 
@@ -49,7 +98,7 @@ VITE_BACKEND_URL=https://your-backend-domain.example.com
 
 `VITE_BACKEND_URL` 是构建时变量，修改后必须重新部署前端。
 
-## 3. 后端部署配置
+## 5. 后端云部署配置
 
 后端启动命令：
 
@@ -71,6 +120,9 @@ python -m pip install -e backend
 DASHSCOPE_API_KEY=replace-in-platform-secret-settings
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen3.7-plus
+ROUTER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+ROUTER_MODEL=deepseek-v4-flash
+ROUTER_DISABLE_THINKING=1
 DATABASE_PATH=/persistent/data/app.sqlite3
 UPLOAD_DIR=/persistent/data/uploads
 CORS_ALLOWED_ORIGINS=https://your-site.netlify.app,https://your-custom-domain.example.com
@@ -98,7 +150,7 @@ PRIVACY_DATA_TTL_DAYS=0
 - `DATABASE_PATH` 和 `UPLOAD_DIR` 必须指向持久化磁盘，否则重新部署后数据会丢失。
 - 如果后端平台没有安装 Tesseract，扫描版 PDF 的 OCR 可能不可用，但普通文本 PDF 仍可解析。
 
-## 4. 上线验证
+## 6. 上线验证
 
 部署后依次检查：
 
@@ -111,7 +163,7 @@ PRIVACY_DATA_TTL_DAYS=0
 7. 测试 PDF 上传、解析和论文精读页。
 8. 确认后端平台的持久化目录中生成数据库和上传文件。
 
-## 5. 需要人工操作的部分
+## 7. 需要人工操作的部分
 
 你需要在平台后台完成：
 
@@ -122,4 +174,3 @@ PRIVACY_DATA_TTL_DAYS=0
 5. 后端平台：配置 Secret 环境变量，尤其是 `DASHSCOPE_API_KEY`。
 6. 后端平台：配置持久化磁盘，并把 `DATABASE_PATH`、`UPLOAD_DIR` 指向该磁盘。
 7. 后端平台：把实际 Netlify 域名填入 `CORS_ALLOWED_ORIGINS`。
-

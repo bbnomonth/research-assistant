@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Alert,
   Badge,
@@ -130,6 +130,9 @@ export function ChatPage() {
   } = useAppStore();
 
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedProjectId = searchParams.get('project');
+  const requestedSessionId = searchParams.get('session');
 
   const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -166,6 +169,12 @@ export function ChatPage() {
     ? streamingSessionIds.includes(activeSessionId)
     : false;
   useEffect(() => {
+    if (requestedProjectId && requestedProjectId !== activeProjectId) {
+      setActiveProjectId(requestedProjectId);
+    }
+  }, [activeProjectId, requestedProjectId, setActiveProjectId]);
+
+  useEffect(() => {
     if (!activeProjectId) {
       setActiveSessionId(null);
       setMessages([]);
@@ -189,11 +198,32 @@ export function ChatPage() {
       setMessages([]);
       return;
     }
+    if (
+      requestedSessionId &&
+      (!requestedProjectId || requestedProjectId === activeProjectId)
+    ) {
+      const requestedSession = sessions.find(
+        (session) => session.id === requestedSessionId,
+      );
+      if (requestedSession) {
+        setActiveSessionId(requestedSession.id);
+        setSearchParams({}, { replace: true });
+        return;
+      }
+    }
     if (activeSessionId && sessions.some((session) => session.id === activeSessionId)) {
       return;
     }
     setActiveSessionId(sessions[0].id);
-  }, [activeProjectId, sessions, activeSessionId, composingNewSession]);
+  }, [
+    activeProjectId,
+    sessions,
+    activeSessionId,
+    composingNewSession,
+    requestedProjectId,
+    requestedSessionId,
+    setSearchParams,
+  ]);
 
   useEffect(() => {
     if (!activeSessionId) {

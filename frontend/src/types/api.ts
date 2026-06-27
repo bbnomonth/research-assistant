@@ -160,6 +160,14 @@ export interface ArtifactSummary {
   artifact_type: string;
   title: string;
   created_at: string;
+  source_links: ArtifactSourceLink[];
+}
+
+export interface ArtifactSourceLink {
+  source_type: 'session' | 'paper' | string;
+  target_id: string;
+  label: string;
+  project_id?: string | null;
 }
 
 export interface Artifact {

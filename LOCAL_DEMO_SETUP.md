@@ -11,7 +11,7 @@
 - Windows 10/11
 - Git
 - Python 3.9 到 3.12
-- Node.js 18 或 20
+- Node.js 18+（本项目已在 Node 24 环境下验证构建）
 - Tesseract OCR，可选
 
 本项目当前后端要求：
@@ -34,7 +34,7 @@ conda activate py39232
 ```powershell
 git clone https://github.com/bbnomonth/research-assistant.git
 cd research-assistant
-git checkout codex/backend-completion
+# 默认使用仓库当前主分支；如演示代码在其它分支，请切换到实际发布分支。
 ```
 
 如果使用压缩包拷贝，请不要拷贝以下目录或文件：
@@ -202,7 +202,7 @@ node -v
 npm -v
 ```
 
-建议使用 Node.js 18 或 20。
+建议使用 Node.js 18+。
 
 ### 后端连不上
 
@@ -222,4 +222,3 @@ QWEN_MODEL=百炼兼容模式支持的模型名
 ```
 
 修改 `.env` 后需要重启后端。
-

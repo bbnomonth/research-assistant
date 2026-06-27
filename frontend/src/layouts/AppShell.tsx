@@ -257,7 +257,7 @@ export function AppShell() {
             type="secondary"
             style={{ fontSize: 12, marginTop: 8, marginBottom: 0 }}
           >
-            创建项目后进入对话工作台。
+            创建新项目后自动进入对话工作台。
           </Typography.Paragraph>
           <Button
             block

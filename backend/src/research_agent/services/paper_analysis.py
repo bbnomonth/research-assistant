@@ -135,6 +135,7 @@ class PaperAnalysisService:
         content = {
             "title": paper.title,
             "report": markdown,
+            "paper_id": paper.id,
         }
         content["evidence"] = [
             {

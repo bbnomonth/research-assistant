@@ -41,7 +41,7 @@ import {
   shortAuthors,
   isUploaded,
 } from '@/utils/paper';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { getTaskControls } from '@/utils/task';
 
 const { Search } = Input;
@@ -59,8 +59,11 @@ export function PapersPage() {
   const [taskMap, setTaskMap] = useState<Record<string, TaskRecord>>({});
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [compareRunning, setCompareRunning] = useState(false);
+  const [highlightedPaperId, setHighlightedPaperId] = useState<string | null>(null);
   const pollTimers = useRef<Record<string, number>>({});
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const requestedPaperId = searchParams.get('paper');
 
   useEffect(() => {
     if (!activeProjectId) {
@@ -70,6 +73,30 @@ export function PapersPage() {
     }
     void loadPapers(activeProjectId);
   }, [activeProjectId]);
+
+  useEffect(() => {
+    if (!requestedPaperId || loading) return;
+    const paper = papers.find((item) => item.id === requestedPaperId);
+    if (!paper) {
+      if (papers.length > 0) {
+        toast.warning('来源论文不存在或已被移出论文库');
+        setSearchParams({}, { replace: true });
+      }
+      return;
+    }
+    setHighlightedPaperId(requestedPaperId);
+    window.setTimeout(() => {
+      document
+        .getElementById(`paper-${requestedPaperId}`)
+        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 80);
+    window.setTimeout(() => {
+      setHighlightedPaperId((current) =>
+        current === requestedPaperId ? null : current,
+      );
+    }, 2400);
+    setSearchParams({}, { replace: true });
+  }, [loading, papers, requestedPaperId, setSearchParams, toast]);
 
   const loadPapers = async (projectId: string) => {
     setLoading(true);
@@ -416,6 +443,7 @@ export function PapersPage() {
                 key={paper.id}
                 paper={paper}
                 taskMap={taskMap}
+                highlighted={highlightedPaperId === paper.id}
                 selected={compareIds.includes(paper.id)}
                 onToggleCompare={() => toggleCompare(paper.id)}
                 onPdfAction={() => void handlePdfAction(paper)}
@@ -437,6 +465,7 @@ export function PapersPage() {
 function PaperItem({
   paper,
   taskMap,
+  highlighted,
   selected,
   onToggleCompare,
   onPdfAction,
@@ -447,6 +476,7 @@ function PaperItem({
 }: {
   paper: Paper;
   taskMap: Record<string, TaskRecord>;
+  highlighted: boolean;
   selected: boolean;
   onToggleCompare: () => void;
   onPdfAction: () => void;
@@ -483,11 +513,15 @@ function PaperItem({
 
   return (
     <List.Item
+      id={`paper-${paper.id}`}
       style={{
         flexDirection: 'column',
         alignItems: 'stretch',
         padding: '14px 0',
+        border: highlighted ? '1px solid #91caff' : '1px solid transparent',
         borderBottom: '1px solid #f0f2f5',
+        borderRadius: highlighted ? 8 : 0,
+        background: highlighted ? '#e6f4ff' : undefined,
       }}
     >
       <Space align="start" style={{ width: '100%', justifyContent: 'space-between' }}>

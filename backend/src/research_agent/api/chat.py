@@ -146,7 +146,7 @@ async def create_framework_card(payload: FrameworkCardRequest, request: Request)
             project_id=payload.project_id,
             artifact_type="framework_card",
             title=title[:300],
-            content=card.to_dict(),
+            content={**card.to_dict(), "source_session_id": session.id},
             markdown=render_framework_card_markdown(card),
         )
         db.commit()
@@ -215,7 +215,7 @@ async def create_topic_guidance_card(
             project_id=payload.project_id,
             artifact_type="topic_guidance_plan",
             title=title,
-            content={"markdown": markdown},
+            content={"markdown": markdown, "source_session_id": session.id},
             markdown=markdown,
         )
         db.commit()
@@ -293,7 +293,11 @@ async def create_guided_reading_card(
             project_id=payload.project_id,
             artifact_type="guided_reading_note",
             title=title[:300],
-            content={"markdown": markdown, "paper_id": paper.id},
+            content={
+                "markdown": markdown,
+                "paper_id": paper.id,
+                "source_session_id": session.id,
+            },
             markdown=markdown,
         )
         db.commit()
