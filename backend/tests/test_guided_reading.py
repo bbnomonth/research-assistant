@@ -90,7 +90,7 @@ def test_guided_reading_returns_feedback_without_artifact(tmp_path) -> None:
     assert "论文原文片段" in gateway.prompt
 
 
-def test_guided_reading_completion_creates_artifact(tmp_path) -> None:
+def test_guided_reading_completion_waits_for_card_confirmation(tmp_path) -> None:
     database = Database(tmp_path / "test.sqlite3")
     database.create_schema()
 
@@ -109,9 +109,8 @@ def test_guided_reading_completion_creates_artifact(tmp_path) -> None:
         )
         db.commit()
 
-    assert result.artifact is not None
-    assert result.artifact.artifact_type == "guided_reading_note"
-    assert "你已经完成了主要精读路径" in result.artifact.markdown
+    assert result.turn.completed is True
+    assert result.artifact is None
 
 
 def test_guided_reading_rejects_paper_from_another_project(tmp_path) -> None:

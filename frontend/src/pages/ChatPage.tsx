@@ -84,12 +84,17 @@ interface AttachmentTopicGuidanceCardOffer {
   type: 'topic_guidance_card_offer';
   data: { project_id: string; session_id: string; title?: string };
 }
+interface AttachmentGuidedReadingCardOffer {
+  type: 'guided_reading_card_offer';
+  data: { project_id: string; session_id: string; paper_id?: string; title?: string };
+}
 type Attachment =
   | AttachmentSearchResults
   | AttachmentArtifact
   | AttachmentEvidence
   | AttachmentFrameworkCardOffer
-  | AttachmentTopicGuidanceCardOffer;
+  | AttachmentTopicGuidanceCardOffer
+  | AttachmentGuidedReadingCardOffer;
 
 interface PendingSend {
   content: string;
@@ -406,6 +411,13 @@ export function ChatPage() {
               appendAttachment(renderSessionId, params.replyId, {
                 type: 'topic_guidance_card_offer',
                 data: event.data as AttachmentTopicGuidanceCardOffer['data'],
+              });
+              break;
+            }
+            case 'guided_reading_card_offer': {
+              appendAttachment(renderSessionId, params.replyId, {
+                type: 'guided_reading_card_offer',
+                data: event.data as AttachmentGuidedReadingCardOffer['data'],
               });
               break;
             }
@@ -1448,7 +1460,85 @@ function AttachmentView({ attachment, projectId }: { attachment: Attachment; pro
   if (attachment.type === 'topic_guidance_card_offer') {
     return <TopicGuidanceCardOffer data={attachment.data} />;
   }
+  if (attachment.type === 'guided_reading_card_offer') {
+    return <GuidedReadingCardOffer data={attachment.data} />;
+  }
   return null;
+}
+
+function GuidedReadingCardOffer({
+  data,
+}: {
+  data: { project_id: string; session_id: string; paper_id?: string; title?: string };
+}) {
+  const { message: toast } = AntdApp.useApp();
+  const [creating, setCreating] = useState(false);
+  const [artifact, setArtifact] = useState<{
+    id: string;
+    title: string;
+    artifact_type: string;
+  } | null>(null);
+
+  const createCard = async () => {
+    if (creating || artifact) return;
+    setCreating(true);
+    try {
+      const created = await api.createGuidedReadingCard({
+        project_id: data.project_id,
+        session_id: data.session_id,
+      });
+      setArtifact({
+        id: created.id,
+        title: created.title,
+        artifact_type: created.artifact_type,
+      });
+      toast.success('已整理为精读卡片');
+    } catch (err) {
+      toast.error((err as Error).message || '整理精读卡片失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (artifact) {
+    return (
+      <Alert
+        type="success"
+        showIcon
+        message={
+          <Space>
+            <span>已生成成果</span>
+            <Tag color="green">精读卡片</Tag>
+            <a
+              href={`/artifacts/${artifact.id}`}
+              onClick={(e) => {
+                e.preventDefault();
+                window.history.pushState({}, '', `/artifacts/${artifact.id}`);
+                window.dispatchEvent(new PopStateEvent('popstate'));
+              }}
+            >
+              {artifact.title || '查看成果'} →
+            </a>
+          </Space>
+        }
+      />
+    );
+  }
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message={
+        <Space wrap>
+          <span>已完成本轮论文精读，是否整理为项目成果卡片？</span>
+          <Button size="small" type="primary" loading={creating} onClick={createCard}>
+            整理为精读卡片
+          </Button>
+        </Space>
+      }
+    />
+  );
 }
 
 function TopicGuidanceCardOffer({

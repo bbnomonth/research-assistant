@@ -145,6 +145,13 @@ export interface TopicGuidanceCardRequest {
 
 export type TopicGuidanceCardResponse = FrameworkCardResponse;
 
+export interface GuidedReadingCardRequest {
+  project_id: string;
+  session_id: string;
+}
+
+export type GuidedReadingCardResponse = FrameworkCardResponse;
+
 export interface ArtifactSummary {
   id: string;
   project_id: string;
@@ -232,6 +239,7 @@ export type StreamEventName =
   | 'artifact'
   | 'framework_card_offer'
   | 'topic_guidance_card_offer'
+  | 'guided_reading_card_offer'
   | 'token'
   | 'done'
   | 'error';

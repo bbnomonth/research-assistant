@@ -600,6 +600,7 @@ class ConversationService:
             "assistant",
             response,
             mode=ChatMode.PAPER_READING.value,
+            metadata=self._paper_message_metadata(paper_id),
         )
         self.db.commit()
         yield StreamEvent(
@@ -617,6 +618,16 @@ class ConversationService:
                     "artifact_type": artifact.artifact_type,
                     "title": artifact.title,
                     "evidence_pages": _unique_evidence_pages(evidence),
+                },
+            )
+        if turn.completed:
+            yield StreamEvent(
+                event="guided_reading_card_offer",
+                data={
+                    "project_id": project_id,
+                    "session_id": session_id,
+                    "paper_id": paper_id,
+                    "title": "整理为精读卡片",
                 },
             )
         yield StreamEvent(event="done", data={"content": response})

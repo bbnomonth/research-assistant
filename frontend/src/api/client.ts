@@ -7,6 +7,8 @@ import type {
   EvidenceSearchResponse,
   FrameworkCardRequest,
   FrameworkCardResponse,
+  GuidedReadingCardRequest,
+  GuidedReadingCardResponse,
   HealthResponse,
   Message,
   Paper,
@@ -261,6 +263,11 @@ export const api = {
     }),
   createTopicGuidanceCard: (body: TopicGuidanceCardRequest) =>
     request<TopicGuidanceCardResponse>('/api/chat/topic/card', {
+      method: 'POST',
+      body: JSON.stringify(body),
+    }),
+  createGuidedReadingCard: (body: GuidedReadingCardRequest) =>
+    request<GuidedReadingCardResponse>('/api/chat/guided-reading/card', {
       method: 'POST',
       body: JSON.stringify(body),
     }),

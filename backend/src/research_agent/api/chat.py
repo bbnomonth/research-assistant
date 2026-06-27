@@ -1,6 +1,10 @@
+import json
+from typing import Optional
+
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from research_agent.db.models import Paper
 from research_agent.repositories.artifacts import ArtifactRepository
 from research_agent.repositories.conversations import ConversationRepository
 from research_agent.schemas.artifacts import ArtifactResponse
@@ -8,6 +12,7 @@ from research_agent.schemas.chat import (
     ChatMode,
     ChatRequest,
     FrameworkCardRequest,
+    GuidedReadingCardRequest,
     TopicGuidanceCardRequest,
 )
 from research_agent.services.conversations import ConversationService
@@ -16,6 +21,7 @@ from research_agent.services.framework_building import (
     is_framework_final_plan,
     render_framework_card_markdown,
 )
+from research_agent.services.guided_reading import GuidedReadingService
 from research_agent.services.topic_guidance import (
     TopicGuidanceService,
     is_topic_guidance_final_plan,
@@ -23,6 +29,23 @@ from research_agent.services.topic_guidance import (
 
 
 router = APIRouter(prefix="/api/chat", tags=["chat"])
+
+
+def _message_metadata(message) -> dict:
+    try:
+        value = json.loads(message.metadata_json or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def _find_session_paper_id(messages) -> Optional[str]:
+    for message in reversed(messages):
+        metadata = _message_metadata(message)
+        paper_id = metadata.get("paper_id")
+        if isinstance(paper_id, str) and paper_id:
+            return paper_id
+    return None
 
 
 @router.post("/stream")
@@ -191,6 +214,84 @@ async def create_topic_guidance_card(
             artifact_type="topic_guidance_plan",
             title=title,
             content={"markdown": markdown},
+            markdown=markdown,
+        )
+        db.commit()
+        return ArtifactResponse.from_model(artifact)
+
+
+@router.post("/guided-reading/card", response_model=ArtifactResponse)
+async def create_guided_reading_card(
+    payload: GuidedReadingCardRequest,
+    request: Request,
+):
+    model_gateway = request.app.state.model_gateway
+    privacy = request.app.state.privacy
+    if model_gateway is None and not privacy["local_only"]:
+        raise HTTPException(
+            status_code=503,
+            detail="整理精读卡片需要调用大模型，请先配置 API Key 后重启服务。",
+        )
+    if model_gateway is None:
+        raise HTTPException(
+            status_code=503,
+            detail="当前没有可用的大模型，暂时无法整理精读卡片。",
+        )
+
+    database = request.app.state.database
+    with database.session_factory() as db:
+        repository = ConversationRepository(db)
+        session_and_messages = repository.get_session_with_messages(
+            payload.session_id,
+        )
+        if session_and_messages is None:
+            raise HTTPException(status_code=404, detail="session not found")
+        session, messages = session_and_messages
+        if session.project_id != payload.project_id:
+            raise HTTPException(status_code=404, detail="session not found")
+
+        guided_replies = [
+            message
+            for message in messages
+            if message.role == "assistant"
+            and message.mode == ChatMode.PAPER_READING.value
+        ]
+        if not guided_replies:
+            raise HTTPException(
+                status_code=400,
+                detail="尚未生成论文精读内容，暂时不能整理为精读卡片。",
+            )
+
+        paper_id = _find_session_paper_id(messages)
+        if paper_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="当前会话缺少精读论文信息，暂时不能整理为精读卡片。",
+            )
+        paper = db.get(Paper, paper_id)
+        if paper is None or paper.project_id != payload.project_id:
+            raise HTTPException(
+                status_code=404,
+                detail="paper not found",
+            )
+
+        markdown = await GuidedReadingService(
+            db=db,
+            model_gateway=model_gateway,
+        ).summarize_to_markdown(
+            paper=paper,
+            messages=[
+                {"role": item.role, "content": item.content}
+                for item in messages
+                if item.role in {"user", "assistant"}
+            ],
+        )
+        title = f"精读笔记：{paper.title[:80]}"
+        artifact = ArtifactRepository(db).create_artifact(
+            project_id=payload.project_id,
+            artifact_type="guided_reading_note",
+            title=title[:300],
+            content={"markdown": markdown, "paper_id": paper.id},
             markdown=markdown,
         )
         db.commit()

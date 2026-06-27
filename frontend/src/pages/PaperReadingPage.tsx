@@ -10,6 +10,7 @@ import {
   Spin,
   Tag,
   Typography,
+  App as AntdApp,
 } from 'antd';
 import {
   ArrowLeftOutlined,
@@ -32,9 +33,15 @@ interface ReadingTurn {
   content: string;
   pending?: boolean;
   error?: string;
+  attachments?: ReadingAttachment[];
 }
 
 type ReadingDisplayTurn = ReadingTurn | ChatTurn;
+
+interface ReadingAttachment {
+  type: 'guided_reading_card_offer';
+  data: { project_id: string; session_id: string; paper_id?: string; title?: string };
+}
 
 function createId(prefix: string): string {
   if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) {
@@ -127,6 +134,16 @@ export function PaperReadingPage() {
     );
   };
 
+  const appendAssistantAttachment = (id: string, attachment: ReadingAttachment) => {
+    setTurns((current) =>
+      current.map((turn) =>
+        turn.id === id
+          ? { ...turn, attachments: [...(turn.attachments ?? []), attachment] }
+          : turn,
+      ),
+    );
+  };
+
   const appendAssistantToken = (id: string, token: string) => {
     setTurns((current) =>
       current.map((turn) =>
@@ -151,6 +168,13 @@ export function PaperReadingPage() {
         assistantId,
         finalContent ? { content: finalContent, pending: false } : { pending: false },
       );
+      return;
+    }
+    if (event.event === 'guided_reading_card_offer') {
+      appendAssistantAttachment(assistantId, {
+        type: 'guided_reading_card_offer',
+        data: event.data as ReadingAttachment['data'],
+      });
       return;
     }
     if (event.event === 'error') {
@@ -320,10 +344,22 @@ export function PaperReadingPage() {
                           {turn.error ? (
                             <Alert type="error" showIcon message={turn.error} />
                           ) : (
-                            <MarkdownRenderer
-                              content={turn.content || (turn.pending ? '正在生成...' : '')}
-                              compact
-                            />
+                            <>
+                              <MarkdownRenderer
+                                content={turn.content || (turn.pending ? '正在生成...' : '')}
+                                compact
+                              />
+                              {((turn as { attachments?: Array<{ type: string; data: unknown }> })
+                                .attachments ?? [])
+                                .filter((attachment) => attachment.type === 'guided_reading_card_offer')
+                                .map((attachment, index) => (
+                                  <div key={`${attachment.type}-${index}`} style={{ marginTop: 8 }}>
+                                    <GuidedReadingCardOffer
+                                      data={attachment.data as ReadingAttachment['data']}
+                                    />
+                                  </div>
+                                ))}
+                            </>
                           )}
                         </>
                       ) : (
@@ -428,5 +464,66 @@ export function PaperReadingPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+function GuidedReadingCardOffer({
+  data,
+}: {
+  data: { project_id: string; session_id: string; paper_id?: string; title?: string };
+}) {
+  const { message: toast } = AntdApp.useApp();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const [artifact, setArtifact] = useState<{ id: string; title: string } | null>(null);
+
+  const createCard = async () => {
+    if (creating || artifact) return;
+    setCreating(true);
+    try {
+      const created = await api.createGuidedReadingCard({
+        project_id: data.project_id,
+        session_id: data.session_id,
+      });
+      setArtifact({ id: created.id, title: created.title });
+      toast.success('已整理为精读卡片');
+    } catch (err) {
+      toast.error((err as Error).message || '整理精读卡片失败');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  if (artifact) {
+    return (
+      <Alert
+        type="success"
+        showIcon
+        message={
+          <Space wrap>
+            <span>已生成成果</span>
+            <Tag color="green">精读卡片</Tag>
+            <Button size="small" onClick={() => navigate(`/artifacts/${artifact.id}`)}>
+              {artifact.title || '查看成果'}
+            </Button>
+          </Space>
+        }
+      />
+    );
+  }
+
+  return (
+    <Alert
+      type="info"
+      showIcon
+      message={
+        <Space wrap>
+          <span>已完成本轮论文精读，是否整理为项目成果卡片？</span>
+          <Button size="small" type="primary" loading={creating} onClick={createCard}>
+            整理为精读卡片
+          </Button>
+        </Space>
+      }
+    />
   );
 }

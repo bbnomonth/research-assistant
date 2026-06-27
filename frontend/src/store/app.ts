@@ -14,7 +14,8 @@ export interface ChatTurnAttachment {
     | 'artifact'
     | 'evidence'
     | 'framework_card_offer'
-    | 'topic_guidance_card_offer';
+    | 'topic_guidance_card_offer'
+    | 'guided_reading_card_offer';
   data: unknown;
 }
 

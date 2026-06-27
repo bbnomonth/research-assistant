@@ -1,8 +1,11 @@
 import ReactMarkdown from 'react-markdown';
+import rehypeKatex from 'rehype-katex';
 import remarkGfm from 'remark-gfm';
+import remarkMath from 'remark-math';
 import type { Components } from 'react-markdown';
 import { Typography } from 'antd';
 import { useMemo } from 'react';
+import 'katex/dist/katex.min.css';
 
 export interface MarkdownRendererProps {
   content: string;
@@ -174,8 +177,22 @@ const compactComponents: Components = {
   ),
 };
 
+function normalizeMathMarkdown(input: string): string {
+  return input
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_, expression: string) => {
+      return `\n\n$$\n${expression.trim()}\n$$\n\n`;
+    })
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_, expression: string) => {
+      return `$${expression.trim()}$`;
+    })
+    .replace(
+      /(?<!\$)([A-Za-z][A-Za-z0-9_{}\\()[\].,\s+\-*/=<>|^]*\\[A-Za-z]+[A-Za-z0-9_{}\\()[\].,\s+\-*/=<>|^]*)\$/g,
+      (_, expression: string) => `$${expression.trim()}$`,
+    );
+}
+
 export function MarkdownRenderer({ content, compact = false }: MarkdownRendererProps) {
-  const safeContent = useMemo(() => content || '', [content]);
+  const safeContent = useMemo(() => normalizeMathMarkdown(content || ''), [content]);
   const components = compact ? compactComponents : baseComponents;
 
   return (
@@ -188,7 +205,11 @@ export function MarkdownRenderer({ content, compact = false }: MarkdownRendererP
         wordBreak: 'break-word',
       }}
     >
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+        components={components}
+      >
         {safeContent}
       </ReactMarkdown>
     </div>
