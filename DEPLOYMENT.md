@@ -1,176 +1,193 @@
 # 环境部署说明
 
-本文档用于在其它电脑本地部署演示，也保留可选云部署说明。项目采用前后端分离结构：
+本文档只说明本地部署和其它电脑演示部署。不要把真实 API Key、`backend/.env`、数据库、上传论文或日志提交到 Git。
 
-- Netlify：部署 `frontend` 静态前端。
-- Python 后端平台：部署 `backend` FastAPI 服务，例如 Render、Railway、Fly.io、VPS 或云服务器。
-- 持久化磁盘或云存储：保存 SQLite 数据库、上传 PDF 和解析结果。
+## 1. 环境要求
 
-不要把真实 API Key、`.env`、数据库、上传论文或日志提交到 Git。
+- Windows 10/11 或 Linux/WSL。
+- Python：`>=3.9,<3.13`，推荐 3.9、3.10 或 3.11；不要使用 Python 3.13+。
+- Node.js：18+，本项目已在 Node 24 环境下验证构建。
+- Tesseract OCR：可选。普通文本 PDF 不依赖 OCR，扫描版 PDF 建议安装并配置。
+- 模型 API Key：需要百炼兼容 OpenAI API 的 Key，写入 `backend/.env`。
 
-## 1. 运行环境
+## 2. 获取代码
 
-- Python：`>=3.9,<3.13`，推荐 3.9 或 3.11。Python 3.13+ 不兼容当前后端依赖。
-- Node.js：18+，当前项目在本机 Node 24 环境下可运行。
-- OCR：可选安装 Tesseract；普通文本 PDF 不依赖 OCR，扫描版 PDF 建议配置。
-- 模型：需要阿里云百炼兼容 OpenAI API 的 Key，写入 `backend/.env`，不要提交。
-
-## 2. 其它电脑本地部署
-
-在目标电脑安装 Git、Python、Node.js 后执行：
+如果从 Git 获取代码：
 
 ```powershell
 git clone <your-repo-url>
 cd 人因工程
 ```
 
-后端配置：
+如果用 U 盘或压缩包拷贝到其它电脑，建议只拷贝源码和文档，不拷贝以下本地数据：
+
+```text
+backend/.env
+data/
+exports/
+frontend/node_modules/
+frontend/dist/
+*.sqlite3
+*.log
+```
+
+## 3. 配置后端
+
+在项目根目录复制环境变量模板：
 
 ```powershell
 Copy-Item backend\.env.example backend\.env
-# 编辑 backend\.env，填写 DASHSCOPE_API_KEY。
-# 如安装了 Tesseract，填写 TESSERACT_EXECUTABLE。
 ```
 
-安装依赖：
+编辑 `backend/.env`，至少填写：
 
-```powershell
-& '<你的 Python 路径>\python.exe' -m pip install -e "backend[test]"
-
-cd frontend
-npm install
-cd ..
-```
-
-启动服务：
-
-```powershell
-# 终端 1：后端
-& '<你的 Python 路径>\python.exe' -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
-
-# 终端 2：前端
-cd frontend
-npm run dev
-```
-
-浏览器访问 `http://127.0.0.1:5173`。后端接口文档在 `http://127.0.0.1:8000/docs`。
-
-Windows 本机也可以直接双击 `dev-start.bat`，但需要先确认脚本中的默认 Python 路径存在，或在启动前设置 `PYTHON_EXE`。
-
-## 3. 本地验证
-
-在本地确认构建和测试通过：
-
-```powershell
-cd frontend
-npm run build
-```
-
-```powershell
-& 'E:\anaconda927\envs\py39232\python.exe' -m pytest backend/tests -q
-```
-
-当前 Git 分支需要先推送到 GitHub，或者合并到 Netlify 绑定的生产分支。
-
-## 4. Netlify 前端配置
-
-仓库根目录已经提供 `netlify.toml`：
-
-```toml
-[build]
-  base = "frontend"
-  command = "npm run build"
-  publish = "dist"
-
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-```
-
-在 Netlify 中连接 GitHub 仓库后，构建配置会自动读取该文件。
-
-Netlify 环境变量：
-
-```text
-VITE_BACKEND_URL=https://your-backend-domain.example.com
-```
-
-`VITE_BACKEND_URL` 是构建时变量，修改后必须重新部署前端。
-
-## 5. 后端云部署配置
-
-后端启动命令：
-
-```bash
-uvicorn research_agent.main:app --app-dir backend/src --host 0.0.0.0 --port $PORT
-```
-
-如果平台不提供 `$PORT`，使用平台指定端口，例如 `8000`。
-
-安装命令：
-
-```bash
-python -m pip install -e backend
-```
-
-后端环境变量：
-
-```text
-DASHSCOPE_API_KEY=replace-in-platform-secret-settings
+```dotenv
+DASHSCOPE_API_KEY=填入你的百炼APIKey
 QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 QWEN_MODEL=qwen3.7-plus
+
 ROUTER_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 ROUTER_MODEL=deepseek-v4-flash
 ROUTER_DISABLE_THINKING=1
-DATABASE_PATH=/persistent/data/app.sqlite3
-UPLOAD_DIR=/persistent/data/uploads
-CORS_ALLOWED_ORIGINS=https://your-site.netlify.app,https://your-custom-domain.example.com
+
+DATABASE_PATH=data/app.sqlite3
+UPLOAD_DIR=data/uploads
 ```
 
-OCR 可选环境变量：
+如果安装了 Tesseract OCR，继续填写：
 
-```text
-TESSERACT_EXECUTABLE=/usr/bin/tesseract
+```dotenv
+TESSERACT_EXECUTABLE=C:\Program Files\Tesseract-OCR\tesseract.exe
 OCR_LANGUAGE=chi_sim+eng
 ```
 
-隐私控制可选环境变量：
+隐私相关配置可选：
 
-```text
+```dotenv
 PRIVACY_PII_SCRUB=1
 PRIVACY_LOCAL_ONLY=0
 PRIVACY_DATA_TTL_DAYS=0
 ```
 
-说明：
+## 4. 安装依赖
 
-- `DASHSCOPE_API_KEY` 只在后端平台的 Secret/Environment Variables 中配置。
-- `CORS_ALLOWED_ORIGINS` 必须包含 Netlify 分配的域名和你的自定义域名。
-- `DATABASE_PATH` 和 `UPLOAD_DIR` 必须指向持久化磁盘，否则重新部署后数据会丢失。
-- 如果后端平台没有安装 Tesseract，扫描版 PDF 的 OCR 可能不可用，但普通文本 PDF 仍可解析。
+后端依赖：
 
-## 6. 上线验证
+```powershell
+& '<你的 Python 路径>\python.exe' -m pip install -e "backend[test]"
+```
 
-部署后依次检查：
+如果已经激活了目标 Python 环境，也可以写成：
 
-1. 打开 Netlify 首页。
-2. 刷新任意前端子页面，确认没有 404。
-3. 访问 `https://your-backend-domain.example.com/api/health`。
-4. 在浏览器开发者工具中确认没有 CORS 报错。
-5. 测试普通对话的流式输出。
-6. 测试文献检索。
-7. 测试 PDF 上传、解析和论文精读页。
-8. 确认后端平台的持久化目录中生成数据库和上传文件。
+```powershell
+python -m pip install -e "backend[test]"
+```
 
-## 7. 需要人工操作的部分
+前端依赖：
 
-你需要在平台后台完成：
+```powershell
+cd frontend
+npm install
+cd ..
+```
 
-1. GitHub：推送当前分支，或合并到生产分支。
-2. Netlify：连接 GitHub 仓库并创建站点。
-3. Netlify：设置 `VITE_BACKEND_URL`。
-4. 后端平台：创建 Python Web Service。
-5. 后端平台：配置 Secret 环境变量，尤其是 `DASHSCOPE_API_KEY`。
-6. 后端平台：配置持久化磁盘，并把 `DATABASE_PATH`、`UPLOAD_DIR` 指向该磁盘。
-7. 后端平台：把实际 Netlify 域名填入 `CORS_ALLOWED_ORIGINS`。
+## 5. 启动项目
+
+方式一：Windows 一键启动。
+
+确认 `dev-start.bat` 中的默认 Python 路径存在，或先设置 `PYTHON_EXE`：
+
+```powershell
+$env:PYTHON_EXE="E:\anaconda927\envs\py39232\python.exe"
+.\dev-start.bat
+```
+
+方式二：手动启动。
+
+终端 1 启动后端：
+
+```powershell
+& '<你的 Python 路径>\python.exe' -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
+```
+
+终端 2 启动前端：
+
+```powershell
+cd frontend
+npm run dev
+```
+
+访问地址：
+
+- 前端：`http://127.0.0.1:5173`
+- 后端健康检查：`http://127.0.0.1:8000/api/health`
+- 后端接口文档：`http://127.0.0.1:8000/docs`
+
+## 6. 本地验证
+
+前端构建：
+
+```powershell
+cd frontend
+npm run build
+cd ..
+```
+
+后端测试：
+
+```powershell
+& '<你的 Python 路径>\python.exe' -m pytest backend\tests -q --basetemp data\pytest-run-workflow
+```
+
+测试完成后可以删除 `data\pytest-run-workflow`。不要删除 `data\app.sqlite3` 和 `data\uploads`，它们是运行数据。
+
+## 7. 演示前检查清单
+
+1. `http://127.0.0.1:8000/api/health` 返回 `status: ok`。
+2. 前端页面可以打开。
+3. 普通对话可以流式输出。
+4. 文献检索能返回候选论文。
+5. 收藏文献后能进入论文库。
+6. PDF 上传或导入后能打开 `/api/papers/{paper_id}/pdf`。
+7. 论文精读页能左侧对话、右侧显示论文。
+8. 项目成果卡片可以查看、编辑、删除和导出。
+9. 不在公开演示中使用含敏感信息的真实论文或真实个人数据。
+
+## 8. 常见问题
+
+### Python 版本不兼容
+
+如果安装依赖时报 `requires a different Python`，切换到 Python 3.9、3.10、3.11 或 3.12。
+
+### 前端依赖安装失败
+
+先确认 Node.js 和 npm：
+
+```powershell
+node -v
+npm -v
+```
+
+建议使用 Node.js 18+。
+
+### 后端启动后模型不可用
+
+检查 `backend/.env`：
+
+```dotenv
+DASHSCOPE_API_KEY=真实Key
+QWEN_MODEL=百炼兼容模式支持的模型名
+```
+
+修改 `.env` 后必须重启后端。
+
+### PDF 精读没有原文
+
+确认对应论文已经上传或导入 PDF，并检查：
+
+```text
+data/uploads/
+http://127.0.0.1:8000/api/papers/{paper_id}/pdf
+```
+
+扫描版 PDF 需要配置 Tesseract OCR 才能获得更完整的文本。
