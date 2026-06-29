@@ -14,9 +14,6 @@ LOG_DIR="${PROJECT_ROOT}/data/logs"
 mkdir -p "${LOG_DIR}"
 
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-if [[ -f "${PROJECT_ROOT}/../anaconda927/envs/py39232/bin/python" ]]; then
-  PYTHON_BIN="${PROJECT_ROOT}/../anaconda927/envs/py39232/bin/python"
-fi
 
 cleanup() {
   echo

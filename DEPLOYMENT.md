@@ -15,8 +15,8 @@
 如果从 Git 获取代码：
 
 ```powershell
-git clone https://github.com/bbnomonth/research-assistant.git "人因工程"
-cd "人因工程"
+git clone https://github.com/bbnomonth/research-assistant.git
+cd research-assistant
 ```
 
 如果用 U 盘或压缩包拷贝到其它电脑，建议只拷贝源码和文档，不拷贝以下本地数据：

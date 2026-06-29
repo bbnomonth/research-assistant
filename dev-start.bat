@@ -6,7 +6,7 @@ REM terminal windows so you can interact with both at once.
 setlocal
 
 set "PYTHON_EXE=%PYTHON_EXE%"
-if "%PYTHON_EXE%"=="" set "PYTHON_EXE=E:\anaconda927\envs\py39232\python.exe"
+if "%PYTHON_EXE%"=="" set "PYTHON_EXE=python"
 
 set "PROJECT_ROOT=%~dp0"
 set "BACKEND_DIR=%PROJECT_ROOT%backend"
