@@ -88,7 +88,7 @@ ROUTER_DISABLE_THINKING=1
 ## 验证命令
 
 ```powershell
-& 'E:\anaconda927\envs\py39232\python.exe' -m pytest backend\tests -q
+python -m pytest backend\tests -q
 
 cd frontend
 npm.cmd test

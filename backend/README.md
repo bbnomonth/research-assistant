@@ -29,7 +29,7 @@
 在项目根目录运行：
 
 ```powershell
-& 'E:\anaconda927\envs\py39232\python.exe' -m pip install -e 'backend[test]'
+python -m pip install -e 'backend[test]'
 ```
 
 ## 2. 配置百炼 API Key
@@ -61,7 +61,7 @@ DASHSCOPE_API_KEY=replace-with-your-api-key
 在项目根目录运行：
 
 ```powershell
-& 'E:\anaconda927\envs\py39232\python.exe' -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000 --reload
+python -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000 --reload
 ```
 
 访问：
@@ -111,7 +111,7 @@ Content-Type: application/json
 测试不会调用真实模型：
 
 ```powershell
-& 'E:\anaconda927\envs\py39232\python.exe' -m pytest backend/tests -q
+python -m pytest backend/tests -q
 ```
 
 ## 6. 数据位置

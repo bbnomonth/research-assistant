@@ -15,8 +15,8 @@
 如果从 Git 获取代码：
 
 ```powershell
-git clone <your-repo-url>
-cd 人因工程
+git clone https://github.com/bbnomonth/research-assistant.git "人因工程"
+cd "人因工程"
 ```
 
 如果用 U 盘或压缩包拷贝到其它电脑，建议只拷贝源码和文档，不拷贝以下本地数据：
@@ -74,7 +74,7 @@ PRIVACY_DATA_TTL_DAYS=0
 后端依赖：
 
 ```powershell
-& '<你的 Python 路径>\python.exe' -m pip install -e "backend[test]"
+python -m pip install -e "backend[test]"
 ```
 
 如果已经激活了目标 Python 环境，也可以写成：
@@ -91,14 +91,20 @@ npm install
 cd ..
 ```
 
-## 5. 启动项目(以本机虚拟环境py39232为例，环境路径为E:\anaconda927\envs\py39232\python.exe)
+## 5. 启动项目
 
 方式一：Windows 一键启动。
 
-确认 `dev-start.bat` 中的默认 Python 路径存在，或先设置 `PYTHON_EXE`：
+如果你已经激活了 Python 环境，直接运行：
 
 ```powershell
-$env:PYTHON_EXE="E:\anaconda927\envs\py39232\python.exe"
+.\dev-start.bat
+```
+
+如果需要指定 Python 路径，先设置 `PYTHON_EXE`：
+
+```powershell
+$env:PYTHON_EXE="<你的 Python 路径>\python.exe"
 .\dev-start.bat
 ```
 
@@ -107,7 +113,7 @@ $env:PYTHON_EXE="E:\anaconda927\envs\py39232\python.exe"
 终端 1 启动后端：
 
 ```powershell
-& '<你的 Python 路径>\python.exe' -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
+python -m uvicorn research_agent.main:app --app-dir backend/src --host 127.0.0.1 --port 8000
 ```
 
 终端 2 启动前端：
@@ -136,7 +142,7 @@ cd ..
 后端测试：
 
 ```powershell
-& '<你的 Python 路径>\python.exe' -m pytest backend\tests -q --basetemp data\pytest-run-workflow
+python -m pytest backend\tests -q --basetemp data\pytest-run-workflow
 ```
 
 测试完成后可以删除 `data\pytest-run-workflow`。不要删除 `data\app.sqlite3` 和 `data\uploads`，它们是运行数据。
