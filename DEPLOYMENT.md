@@ -91,7 +91,7 @@ npm install
 cd ..
 ```
 
-## 5. 启动项目
+## 5. 启动项目(以本机虚拟环境py39232为例，环境路径为E:\anaconda927\envs\py39232\python.exe)
 
 方式一：Windows 一键启动。
 
@@ -175,13 +175,13 @@ npm -v
 检查 `backend/.env`：
 
 ```dotenv
-DASHSCOPE_API_KEY=真实Key
+DASHSCOPE_API_KEY=replace-with-your-api-key
 QWEN_MODEL=百炼兼容模式支持的模型名
 ```
 
 修改 `.env` 后必须重启后端。
 
-### PDF 精读没有原文
+### PDF 若精读没有原文
 
 确认对应论文已经上传或导入 PDF，并检查：
 
