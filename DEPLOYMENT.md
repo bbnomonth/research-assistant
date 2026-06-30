@@ -15,7 +15,7 @@
 如果从 Git 获取代码：
 
 ```powershell
-git clone https://github.com/bbnomonth/research-assistant.git
+git clone https://github.com/Freakyyyyyyyy/research-assistant.git
 cd research-assistant
 ```
 
