@@ -19,7 +19,7 @@ from research_agent.services.model_gateway import (
 from research_agent.services.pdf_processing import OcrService, TesseractOcrService
 from research_agent.services.arxiv_search import (
     ArxivSearchProvider,
-    LangChainArxivSearchProvider,
+    ArxivClientSearchProvider,
 )
 from research_agent.services.arxiv_import import HttpxPdfDownloader, PdfDownloader
 from research_agent.repositories.tasks import TaskRepository
@@ -58,7 +58,7 @@ def create_app(
             extra_body=router_extra_body,
         )
     if arxiv_provider is None:
-        arxiv_provider = LangChainArxivSearchProvider(max_results=20)
+        arxiv_provider = ArxivClientSearchProvider(max_results=20)
     if ocr_service is None and active_settings.tesseract_executable:
         ocr_service = TesseractOcrService(
             executable=active_settings.tesseract_executable,
